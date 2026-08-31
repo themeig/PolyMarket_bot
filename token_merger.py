@@ -1,9 +1,10 @@
 """
-ON-CHAIN POSITION MERGER FOR POLYMARKET (YES + NO -> USDC)
-Uses exact conditionId grouping and robust Polygon RPC connection.
+ON-CHAIN & GASLESS POSITION MERGER FOR POLYMARKET (YES + NO -> USDC)
+Supports Gnosis CTF, NegRisk Adapter, and Polymarket Builder Relayer.
 """
 
 import os
+import time
 import logging
 from typing import Optional, Dict, Any, List
 from web3 import Web3
@@ -49,6 +50,10 @@ class TokenMerger:
         self.private_key = private_key or os.getenv("PRIVATE_KEY", "")
         self.proxy_wallet = proxy_wallet or os.getenv("POLY_PROXY_ADDRESS", "0x117dA19a541bA6d89AE52043A67Dbc22572D1de8")
         self.rpc_url = rpc_url or os.getenv("RPC_URL", "https://polygon.drpc.org")
+        self.builder_key = os.getenv("POLY_BUILDER_KEY", "01a05867-2dfd-7dda-80f2-bdc604cf4e09")
+        self.builder_secret = os.getenv("POLY_BUILDER_SECRET", "pdmxSbY36Da_hORbMaT9qobifWs4YWYuyNFLJbL5Apg=")
+        self.builder_passphrase = os.getenv("POLY_BUILDER_PASSPHRASE", "802d71a6bdc6ccee3ff7d5a90930dc870c5c221e88a623919016cae2333f9ee9")
+        self.relayer_url = os.getenv("POLY_RELAYER_URL", "https://relayer-v2.polymarket.com")
         self._w3 = None
         self._account = None
 
@@ -113,23 +118,58 @@ class TokenMerger:
 
     def execute_merge(self, condition_id: str, amount_shares: float, is_neg_risk: bool = True) -> Optional[str]:
         """
-        Executes on-chain mergePositions transaction.
+        Executes on-chain or gasless relayer merge transaction.
         """
+        amount_raw = int(amount_shares * 1e6)
+        if amount_raw <= 0:
+            return None
+
+        log.info(f"[MERGE] Attempting automated merge of {amount_shares:.2f} pairs for condition {condition_id[:10]}...")
+
+        # 1. Attempt via Builder Relayer (Gasless)
+        try:
+            from py_builder_relayer_client.client import RelayClient
+            from py_builder_relayer_client.models import DepositWalletCall
+            from py_builder_signing_sdk.config import BuilderConfig
+            from py_builder_signing_sdk.sdk_types import BuilderApiKeyCreds
+
+            creds = BuilderApiKeyCreds(key=self.builder_key, secret=self.builder_secret, passphrase=self.builder_passphrase)
+            client = RelayClient(self.relayer_url, 137, private_key=self.private_key, builder_config=BuilderConfig(local_builder_creds=creds))
+            
+            w3 = Web3()
+            target_addr = NEG_RISK_ADAPTER_ADDRESS if is_neg_risk else CONDITIONAL_TOKENS_ADDRESS
+            target_abi = _NEG_RISK_ABI if is_neg_risk else _CTF_ABI
+            contract = w3.eth.contract(address=Web3.to_checksum_address(target_addr), abi=target_abi)
+            clean_cid = bytes.fromhex(condition_id.replace("0x", ""))
+            
+            if is_neg_risk:
+                calldata = contract.encode_abi('mergePositions', [clean_cid, amount_raw])
+            else:
+                calldata = contract.encode_abi('mergePositions', [Web3.to_checksum_address(USDC_POLYGON_ADDRESS), bytes(32), clean_cid, [1, 2], amount_raw])
+
+            call = DepositWalletCall(target=Web3.to_checksum_address(target_addr), value="0", data=calldata)
+            
+            from eth_account import Account
+            signer = Account.from_key(self.private_key).address
+            nonce_resp = client.get_nonce(signer, "WALLET")
+            nonce = nonce_resp.get("nonce") if isinstance(nonce_resp, dict) else getattr(nonce_resp, "nonce", 0)
+            deadline = str(int(time.time()) + 3600)
+
+            resp = client.execute_deposit_wallet_batch([call], Web3.to_checksum_address(self.proxy_wallet), str(nonce), deadline)
+            tx_hash = getattr(resp, "transaction_hash", None) or getattr(resp, "hash", None) or str(resp)
+            log.info(f"[MERGE] Gasless Merge successfully broadcasted via Relayer! Tx: {tx_hash}")
+            return tx_hash
+        except Exception as re_err:
+            log.warning(f"[MERGE] Relayer execution attempt info: {re_err}")
+
+        # 2. Fallback via Direct Contract Call
         if not self._ensure_web3() or not self._account:
-            log.warning("Cannot execute merge without Web3 and Private Key configured.")
             return None
 
         try:
-            amount_raw = int(amount_shares * 1e6)
-            if amount_raw <= 0:
-                return None
-
-            log.info(f"[MERGE] Attempting to merge {amount_shares:.2f} pairs for condition {condition_id[:10]}...")
-            
             contract_addr = NEG_RISK_ADAPTER_ADDRESS if is_neg_risk else CONDITIONAL_TOKENS_ADDRESS
             contract_abi = _NEG_RISK_ABI if is_neg_risk else _CTF_ABI
             contract = self._w3.eth.contract(address=self._w3.to_checksum_address(contract_addr), abi=contract_abi)
-            
             clean_cid = bytes.fromhex(condition_id.replace("0x", ""))
             
             if is_neg_risk:
@@ -137,7 +177,7 @@ class TokenMerger:
             else:
                 tx_func = contract.functions.mergePositions(
                     self._w3.to_checksum_address(USDC_POLYGON_ADDRESS),
-                    b'\x00' * 32,
+                    bytes(32),
                     clean_cid,
                     [1, 2],
                     amount_raw
@@ -153,8 +193,8 @@ class TokenMerger:
             signed_tx = self._w3.eth.account.sign_transaction(tx, self.private_key)
             tx_hash = self._w3.eth.send_raw_transaction(signed_tx.rawTransaction)
             tx_hex = self._w3.to_hex(tx_hash)
-            log.info(f"[MERGE] Merge transaction broadcasted successfully! Tx: {tx_hex}")
+            log.info(f"[MERGE] Direct Merge transaction broadcasted! Tx: {tx_hex}")
             return tx_hex
-        except Exception as e:
-            log.error(f"[MERGE] Merge execution failed: {e}")
+        except Exception as direct_err:
+            log.error(f"[MERGE] Direct merge execution failed: {direct_err}")
             return None

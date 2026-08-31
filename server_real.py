@@ -247,12 +247,27 @@ class CompletePolymarketQuantBot:
                             })
                         self.cached_trades = formatted_trades
 
-                        # Scan for mergeable pairs (YES+NO -> USDC)
+                        # Scan and execute automated Complete Set Merges (YES+NO -> USDC)
                         try:
                             self.mergeable_pairs = self.token_merger.find_mergeable_pairs(positions)
                             if self.enable_auto_merge and self.mergeable_pairs:
                                 for mp in self.mergeable_pairs:
-                                    print(f"[{now_str}] 💎 TROVATA COPPIA COMPLETA DA FONDERE: {mp['mergeable_shares']} quote su '{mp['market'][:25]}' -> Incasso: {mp['expected_usdc']}$ USDC")
+                                    cid = mp.get("condition_id")
+                                    shares = mp.get("mergeable_shares", 0)
+                                    is_neg = mp.get("is_neg_risk", True)
+                                    if shares >= 0.5 and cid:
+                                        print(f"[{now_str}] 💎 ESECUZIONE AUTOMATICA FUSIONE ON-CHAIN: {shares} quote su '{mp['market'][:25]}' -> Incasso: {mp['expected_usdc']}$ USDC...")
+                                        tx_h = self.token_merger.execute_merge(cid, shares, is_neg)
+                                        if tx_h:
+                                            if not hasattr(self, "merge_history"):
+                                                self.merge_history = []
+                                            self.merge_history.append({
+                                                "time": now_str,
+                                                "market": mp["market"],
+                                                "shares": shares,
+                                                "payout": mp["expected_usdc"],
+                                                "tx_hash": tx_h
+                                            })
                         except Exception as me:
                             pass
                         for pos in positions:
