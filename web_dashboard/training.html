@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymarket — Laboratorio Addestramento AI & Ottimizzazione Parametri</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            900: '#0b0f19',
+                            800: '#111827',
+                            700: '#1f2937',
+                            600: '#374151'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass {
+            background: rgba(17, 24, 39, 0.85);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex bg-[#0b0f19] text-gray-100 antialiased overflow-x-hidden">
+
+    <!-- TOP HEADER & NAVIGATION -->
+        <!-- LEFT SIDEBAR -->
+    <aside class="w-64 min-w-[16rem] h-screen sticky top-0 bg-[#070b14] border-r border-gray-800/90 flex flex-col justify-between p-4 z-50 shrink-0 pointer-events-auto select-none">
+        <div class="space-y-6">
+            <!-- BRANDING -->
+            <div class="flex items-center gap-3 px-2 py-1">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 shrink-0">
+                    <i data-lucide="shield-check" class="w-6 h-6 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-base font-extrabold tracking-tight text-white flex items-center gap-1.5">
+                        POLYMARKET
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">AI PRO</span>
+                    </h1>
+                    <p class="text-[11px] text-gray-400 font-medium">Trading & AI Terminal</p>
+                </div>
+            </div>
+
+            <!-- NAVIGATION MENU -->
+            <div class="space-y-1.5">
+                <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-gray-500">Navigazione</p>
+                
+                <a href="/" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="zap" class="w-4 h-4 text-cyan-400"></i>
+                    <span>⚡ Market Making Reale</span>
+                </a>
+
+                <a href="/logical" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="brain" class="w-4 h-4 text-purple-400"></i>
+                    <span>🧠 Spread Logico & APY</span>
+                </a>
+
+                <a href="/training" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 bg-indigo-600/25 text-indigo-300 border-indigo-500/40 shadow-sm">
+                    <i data-lucide="cpu" class="w-4 h-4 text-indigo-400"></i>
+                    <span>🤖 Addestramento AI</span>
+                </a>
+
+                <a href="/simulation" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="gamepad-2" class="w-4 h-4 text-emerald-400"></i>
+                    <span>🎮 Simulazione Live</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- SIDEBAR FOOTER: WALLET & STATUS -->
+        <div class="space-y-3 pt-4 border-t border-gray-800/80">
+            <!-- WALLET STATUS -->
+            <div class="p-2.5 rounded-xl bg-gray-900/90 border border-gray-800 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                    <div class="flex flex-col">
+                        <span class="text-[9px] uppercase font-bold text-gray-400">Polygon Chain 137</span>
+                        <span class="text-[11px] font-bold mono text-gray-200">0xb41E...7CAf</span>
+                    </div>
+                </div>
+                <i data-lucide="wallet" class="w-4 h-4 text-gray-500"></i>
+            </div>
+
+            <!-- BOT ENGINE CONTROLS -->
+            <div class="grid grid-cols-2 gap-2">
+                <button id="btn-toggle" onclick="toggleBot ? toggleBot() : (typeof toggleSimulation === 'function' ? toggleSimulation() : alert('Usa la pagina Reale o Simulazione'))" class="w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-emerald-500 hover:bg-emerald-600 text-black flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/20 active:scale-95">
+                    <i data-lucide="pause" id="toggle-icon" class="w-3.5 h-3.5"></i>
+                    <span id="toggle-text">Attivo</span>
+                </button>
+                <button onclick="emergencyStop ? emergencyStop() : alert('Disponibile in modalità Reale')" class="w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-rose-600/30 hover:bg-rose-600 border border-rose-500/40 text-rose-300 hover:text-white flex items-center justify-center gap-1.5 transition-all active:scale-95" title="Arresta Bot">
+                    <i data-lucide="octagon-alert" class="w-3.5 h-3.5"></i>
+                    <span>Stop</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+
+    <!-- MAIN CONTAINER -->
+    <main class="flex-1 min-h-screen overflow-y-auto p-6 space-y-6">
+
+        <!-- CONTROLLO ADDESTRAMENTO & STATO -->
+        <div class="glass rounded-2xl p-5 border border-indigo-500/30 bg-gradient-to-r from-gray-900 via-gray-900 to-indigo-950/20 shadow-xl flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-3 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                    <i data-lucide="activity" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h2 class="text-base font-extrabold text-white">Laboratorio di Calibrazione AI (Avellaneda-Stoikov Policy)</h2>
+                    <p class="text-xs text-gray-400">Simula milioni di esecuzioni sul dataset storico di Polymarket per trovare il massimo Sharpe Ratio</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2.5">
+                <button id="btn-start-training" onclick="startTraining()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 font-bold text-xs text-white shadow-lg shadow-indigo-600/30 flex items-center gap-2 transition-all active:scale-95">
+                    <i data-lucide="play" class="w-4 h-4"></i>
+                    <span>🚀 Avvia Addestramento Istituzionale (50.000 Epoche - 100k Dataset)</span>
+                </button>
+                <button id="btn-apply-params" onclick="applyOptimalParams()" class="px-4 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 font-bold text-xs text-emerald-300 flex items-center gap-2 transition-all active:scale-95">
+                    <i data-lucide="check-check" class="w-4 h-4 text-emerald-400"></i>
+                    <span>Applica Parametri al Bot Live</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 4 KPI CARDS -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            
+            <!-- KPI 1: Progresso Epoche -->
+            <div class="glass rounded-2xl p-4 border border-gray-800">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400">Progresso Epoche</p>
+                        <h2 id="kpi-epoch" class="text-2xl font-extrabold mono mt-1 text-indigo-300">0 / 50.000</h2>
+                    </div>
+                    <div class="p-2 rounded-lg bg-indigo-500/10 text-indigo-400">
+                        <i data-lucide="layers" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <div class="w-full bg-gray-800 h-1.5 rounded-full mt-3 overflow-hidden">
+                    <div id="kpi-epoch-bar" class="bg-indigo-500 h-full w-0 transition-all duration-300"></div>
+                </div>
+            </div>
+
+            <!-- KPI 2: Miglior Sharpe Ratio -->
+            <div class="glass rounded-2xl p-4 border border-gray-800">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400">Miglior Sharpe Ratio</p>
+                        <h2 id="kpi-sharpe" class="text-2xl font-extrabold mono mt-1 text-emerald-400">0.00</h2>
+                    </div>
+                    <div class="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                        <i data-lucide="trending-up" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <p class="mt-3 text-[10px] text-gray-400">Rendimento corretto per il rischio d'inventario</p>
+            </div>
+
+            <!-- KPI 3: Efficienza Complete Set Merge -->
+            <div class="glass rounded-2xl p-4 border border-gray-800">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400">Win Rate / Merge Rate</p>
+                        <h2 id="kpi-winrate" class="text-2xl font-extrabold mono mt-1 text-cyan-400">0.0 %</h2>
+                    </div>
+                    <div class="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
+                        <i data-lucide="sparkles" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <p class="mt-3 text-[10px] text-gray-400">Percentuale trade chiusi con fusione a rischio zero</p>
+            </div>
+
+            <!-- KPI 4: Parametri Ottimali Trovati -->
+            <div class="glass rounded-2xl p-4 border border-purple-500/30 bg-purple-950/20">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-purple-300">Parametri Ottimali (Best Model)</p>
+                        <div class="mt-1 flex items-center gap-2 mono text-xs font-bold text-white">
+                            <span>γ: <strong id="best-gamma" class="text-purple-400">0.150</strong></span>
+                            <span>δ: <strong id="best-delta" class="text-cyan-400">2t</strong></span>
+                            <span>Cap: <strong id="best-qmax" class="text-emerald-400">10$</strong></span>
+                        </div>
+                    </div>
+                    <div class="p-2 rounded-lg bg-purple-500/20 text-purple-300">
+                        <i data-lucide="target" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <p class="mt-2 text-[10px] text-purple-300/80">Pronti per essere applicati al bot live</p>
+            </div>
+
+        </div>
+
+        <!-- PERFORMANCE PER REGIME DI MERCATO (3 BLOCCHI) -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            
+            <div class="glass rounded-2xl p-4 border border-emerald-500/30 bg-emerald-950/10 flex items-center justify-between">
+                <div>
+                    <span class="text-[10px] font-bold uppercase text-emerald-400 flex items-center gap-1">
+                        <i data-lucide="sun" class="w-3.5 h-3.5"></i>
+                        Regime Calmo (Quiet)
+                    </span>
+                    <h3 id="reg-calmo-val" class="text-lg font-bold mono text-white mt-0.5">+0.00 $</h3>
+                    <p id="reg-calmo-sub" class="text-[10px] text-gray-400">Win Rate: 0.0% | Sharpe: 0.0</p>
+                </div>
+                <div class="text-right mono text-xs text-emerald-400 font-extrabold">
+                    Spread Stretto (1-2t)
+                </div>
+            </div>
+
+            <div class="glass rounded-2xl p-4 border border-cyan-500/30 bg-cyan-950/10 flex items-center justify-between">
+                <div>
+                    <span class="text-[10px] font-bold uppercase text-cyan-400 flex items-center gap-1">
+                        <i data-lucide="wind" class="w-3.5 h-3.5"></i>
+                        Regime Trending
+                    </span>
+                    <h3 id="reg-trend-val" class="text-lg font-bold mono text-white mt-0.5">+0.00 $</h3>
+                    <p id="reg-trend-sub" class="text-[10px] text-gray-400">Win Rate: 0.0% | Sharpe: 0.0</p>
+                </div>
+                <div class="text-right mono text-xs text-cyan-400 font-extrabold">
+                    Skew Aggressivo
+                </div>
+            </div>
+
+            <div class="glass rounded-2xl p-4 border border-amber-500/30 bg-amber-950/10 flex items-center justify-between">
+                <div>
+                    <span class="text-[10px] font-bold uppercase text-amber-400 flex items-center gap-1">
+                        <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+                        Regime Volatile (News)
+                    </span>
+                    <h3 id="reg-vol-val" class="text-lg font-bold mono text-white mt-0.5">+0.00 $</h3>
+                    <p id="reg-vol-sub" class="text-[10px] text-gray-400">Win Rate: 0.0% | Sharpe: 0.0</p>
+                </div>
+                <div class="text-right mono text-xs text-amber-400 font-extrabold">
+                    Spread Largo (4-8t)
+                </div>
+            </div>
+
+        </div>
+
+        <!-- SEZIONE GRAFICI (2 GRAFICI AFFIANCATI) -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            
+            <!-- GRAFICO 1: CURVA DI CONVERGENZA SHARPE & LOSS -->
+            <div class="glass rounded-2xl p-5 border border-gray-800">
+                <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-800">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-gray-300 flex items-center gap-2">
+                        <i data-lucide="line-chart" class="w-4 h-4 text-indigo-400"></i>
+                        Evoluzione Sharpe Ratio & Loss (per Epoca)
+                    </h3>
+                    <span class="text-[10px] mono text-gray-500">PPO Optimizer</span>
+                </div>
+                <div class="h-60 w-full">
+                    <canvas id="trainingChart"></canvas>
+                </div>
+            </div>
+
+            <!-- GRAFICO 2: SIMULAZIONE EQUITY & PNL CUMULATO -->
+            <div class="glass rounded-2xl p-5 border border-gray-800">
+                <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-800">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-gray-300 flex items-center gap-2">
+                        <i data-lucide="dollar-sign" class="w-4 h-4 text-emerald-400"></i>
+                        Curva di PnL Cumulato nel Backtesting (USD)
+                    </h3>
+                    <span class="text-[10px] mono text-gray-500">Avellaneda-Stoikov Sim</span>
+                </div>
+                <div class="h-60 w-full">
+                    <canvas id="pnlChart"></canvas>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- LEADERBOARD TOP 5 MODELLI & TERMINALE LOGS -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            <!-- LEADERBOARD TOP 5 POLICY (7/12) -->
+            <div class="glass rounded-2xl p-5 lg:col-span-7 flex flex-col border border-gray-800">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-gray-800">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="trophy" class="w-4 h-4 text-amber-400"></i>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">Leaderboard Migliori Policy AI Trovate</h3>
+                    </div>
+                    <span class="text-[10px] mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">Top 5 Best Checkpoints</span>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead class="text-gray-400 border-b border-gray-800 uppercase text-[10px] font-semibold">
+                            <tr>
+                                <th class="pb-2">Rank</th>
+                                <th class="pb-2">Epoca</th>
+                                <th class="pb-2 text-right">Sharpe</th>
+                                <th class="pb-2 text-right">Win Rate</th>
+                                <th class="pb-2 text-right">Gamma γ</th>
+                                <th class="pb-2 text-right">Spread δ</th>
+                                <th class="pb-2 text-right">PnL Sim</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-body" class="divide-y divide-gray-800/60 text-gray-300 mono text-[11px]">
+                            <tr><td colspan="7" class="py-6 text-center text-gray-500 italic">Avvia l'addestramento per generare la leaderboard...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- TERMINALE LOG ADDESTRAMENTO (5/12) -->
+            <div class="glass rounded-2xl p-5 lg:col-span-5 flex flex-col border border-indigo-500/30 bg-black/60">
+                <div class="flex items-center justify-between pb-2 mb-2 border-b border-gray-800">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white mono">Live Training Console</h3>
+                    </div>
+                    <span class="text-[10px] mono text-gray-500">stdout/stderr</span>
+                </div>
+
+                <div id="training-terminal" class="h-64 overflow-y-auto mono text-[11px] text-gray-300 space-y-1 p-2 bg-gray-950/80 rounded-xl border border-gray-800/80">
+                    <p class="text-gray-500 italic">[Pronto per l'addestramento. Clicca "Avvia Addestramento" per iniziare...]</p>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ESPLORATORE DATASET L2 IN BASSO -->
+        <div class="glass rounded-2xl p-5 flex flex-col border border-gray-800">
+            <div class="flex items-center justify-between pb-3 mb-3 border-b border-gray-800">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="database" class="w-4 h-4 text-cyan-400"></i>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-white">Dataset Storico Microstruttura L2 (Polymarket CLOB)</h3>
+                </div>
+                <span class="text-[10px] mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">100.000 Snapshot L2 in Memoria (180 Giorni Storici)</span>
+            </div>
+
+            <div class="overflow-x-auto max-h-60 overflow-y-auto pr-1">
+                <table class="w-full text-left text-xs">
+                    <thead class="text-gray-400 border-b border-gray-800 uppercase text-[10px] font-semibold sticky top-0 bg-gray-900/95 backdrop-blur">
+                        <tr>
+                            <th class="pb-2">ID</th>
+                            <th class="pb-2">Timestamp</th>
+                            <th class="pb-2">Mercato</th>
+                            <th class="pb-2 text-right">Fair Value</th>
+                            <th class="pb-2 text-right">Spread</th>
+                            <th class="pb-2 text-right">Volatilità σ</th>
+                            <th class="pb-2 text-right">Regime</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dataset-table-body" class="divide-y divide-gray-800/60 text-gray-300 mono text-[11px]">
+                        <tr><td colspan="7" class="py-4 text-center text-gray-500 italic">Caricamento dataset...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- FOOTER -->
+    <footer class="border-t border-gray-800/80 px-6 py-4 text-center text-xs text-gray-500">
+        Polymarket Quantitative AI Training Laboratory • Modulo RL Avellaneda-Stoikov
+    </footer>
+
+    <!-- SCRIPT CLIENT -->
+    <script>
+        let trainingChart = null;
+        let pnlChart = null;
+
+        function initCharts() {
+            const ctx1 = document.getElementById('trainingChart').getContext('2d');
+            trainingChart = new Chart(ctx1, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Sharpe Ratio',
+                            data: [],
+                            borderColor: '#34d399',
+                            backgroundColor: 'rgba(52, 211, 153, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Loss (MSE)',
+                            data: [],
+                            borderColor: '#818cf8',
+                            backgroundColor: 'transparent',
+                            borderWidth: 1.5,
+                            borderDash: [4, 4],
+                            tension: 0.3,
+                            yAxisID: 'y1'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { display: true, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { position: 'left', grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y1: { position: 'right', display: false }
+                    },
+                    plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 } } } }
+                }
+            });
+
+            const ctx2 = document.getElementById('pnlChart').getContext('2d');
+            pnlChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'PnL Cumulato ($)',
+                        data: [],
+                        borderColor: '#a855f7',
+                        backgroundColor: 'rgba(168, 85, 247, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { display: true, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' } }
+                    },
+                    plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 } } } }
+                }
+            });
+        }
+
+        async function fetchDataset() {
+            try {
+                const res = await fetch('/api/training/dataset');
+                const data = await res.json();
+                const tbody = document.getElementById('dataset-table-body');
+                if (data.samples && data.samples.length > 0) {
+                    tbody.innerHTML = data.samples.map(s => `
+                        <tr class="hover:bg-gray-800/40">
+                            <td class="py-1.5 text-gray-500">${s.id}</td>
+                            <td class="py-1.5 text-gray-400">${s.timestamp.split(' ')[1]}</td>
+                            <td class="py-1.5 text-white truncate max-w-[200px]" title="${s.market}">${s.market}</td>
+                            <td class="py-1.5 text-right font-bold text-gray-200">${s.fair_value.toFixed(3)}$</td>
+                            <td class="py-1.5 text-right text-cyan-300">${s.spread_usd.toFixed(3)}$</td>
+                            <td class="py-1.5 text-right text-purple-300">${(s.volatility * 100).toFixed(2)}%</td>
+                            <td class="py-1.5 text-right">
+                                <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${s.regime === 'CALMO' ? 'bg-emerald-500/20 text-emerald-300' : (s.regime === 'TRENDING' ? 'bg-cyan-500/20 text-cyan-300' : 'bg-amber-500/20 text-amber-300')}">
+                                    ${s.regime}
+                                </span>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (err) {
+                console.error("Errore fetch dataset:", err);
+            }
+        }
+
+        let lastRenderedEpoch = -1;
+        let lastTrainingState = null;
+
+        async function pollTrainingStatus() {
+            try {
+                const res = await fetch('/api/training/status');
+                const data = await res.json();
+
+                // Aggiorna solo se i dati sono effettivamente cambiati
+                if (data.current_epoch === lastRenderedEpoch && data.is_training === lastTrainingState) {
+                    return;
+                }
+                lastRenderedEpoch = data.current_epoch;
+                lastTrainingState = data.is_training;
+
+                // Aggiorna KPI
+                document.getElementById('kpi-epoch').innerText = `${data.current_epoch} / ${data.total_epochs}`;
+                document.getElementById('kpi-epoch-bar').style.width = `${(data.current_epoch / data.total_epochs) * 100}%`;
+                document.getElementById('kpi-sharpe').innerText = data.best_sharpe.toFixed(2);
+                document.getElementById('kpi-winrate').innerText = `${data.best_win_rate.toFixed(1)} %`;
+
+                if (data.best_params) {
+                    document.getElementById('best-gamma').innerText = data.best_params.gamma.toFixed(3);
+                    document.getElementById('best-delta').innerText = `${data.best_params.delta_min_ticks}t`;
+                    document.getElementById('best-qmax').innerText = `${data.best_params.q_max_usdc}$`;
+                }
+
+                // Aggiorna Regime Stats
+                if (data.regime_stats) {
+                    const c = data.regime_stats.CALMO;
+                    document.getElementById('reg-calmo-val').innerText = `+${c.pnl.toFixed(2)} $`;
+                    document.getElementById('reg-calmo-sub').innerText = `Win Rate: ${c.win_rate}% | Sharpe: ${c.sharpe}`;
+
+                    const t = data.regime_stats.TRENDING;
+                    document.getElementById('reg-trend-val').innerText = `+${t.pnl.toFixed(2)} $`;
+                    document.getElementById('reg-trend-sub').innerText = `Win Rate: ${t.win_rate}% | Sharpe: ${t.sharpe}`;
+
+                    const v = data.regime_stats.VOLATILE;
+                    document.getElementById('reg-vol-val').innerText = `+${v.pnl.toFixed(2)} $`;
+                    document.getElementById('reg-vol-sub').innerText = `Win Rate: ${v.win_rate}% | Sharpe: ${v.sharpe}`;
+                }
+
+                // Aggiorna Leaderboard
+                if (data.leaderboard && data.leaderboard.length > 0) {
+                    const lbBody = document.getElementById('leaderboard-body');
+                    lbBody.innerHTML = data.leaderboard.map((row, idx) => `
+                        <tr class="hover:bg-gray-800/50">
+                            <td class="py-1.5 font-bold ${idx === 0 ? 'text-amber-400' : 'text-gray-400'}">#${idx + 1} ${idx === 0 ? '🏆' : ''}</td>
+                            <td class="py-1.5 text-gray-300">Epoca ${row.epoch}</td>
+                            <td class="py-1.5 text-right font-extrabold text-emerald-400">${row.sharpe.toFixed(2)}</td>
+                            <td class="py-1.5 text-right text-cyan-300">${row.win_rate.toFixed(1)}%</td>
+                            <td class="py-1.5 text-right text-purple-300">${row.gamma.toFixed(3)}</td>
+                            <td class="py-1.5 text-right text-gray-300">${row.delta}t</td>
+                            <td class="py-1.5 text-right font-bold text-white">+${row.pnl.toFixed(2)}$</td>
+                        </tr>
+                    `).join('');
+                }
+
+                // Aggiorna Console Terminale
+                if (data.logs && data.logs.length > 0) {
+                    const term = document.getElementById('training-terminal');
+                    term.innerHTML = data.logs.map(l => `<p class="${l.includes('RECORD') ? 'text-emerald-400 font-bold' : (l.includes('Loss') ? 'text-cyan-300' : 'text-gray-300')}">${l}</p>`).join('');
+                    term.scrollTop = term.scrollHeight;
+                }
+
+                // Aggiorna Grafici con animazione disattivata per massime performance
+                if (data.chart_history && data.chart_history.epochs.length > 0) {
+                    trainingChart.data.labels = data.chart_history.epochs;
+                    trainingChart.data.datasets[0].data = data.chart_history.sharpe;
+                    trainingChart.data.datasets[1].data = data.chart_history.loss;
+                    trainingChart.update('none');
+
+                    pnlChart.data.labels = data.chart_history.epochs;
+                    pnlChart.data.datasets[0].data = data.chart_history.pnl;
+                    pnlChart.update('none');
+                }
+
+                // Toggle Bottone
+                const btn = document.getElementById('btn-start-training');
+                if (data.is_training) {
+                    btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Addestramento in Corso...</span>`;
+                    btn.classList.add('opacity-75');
+                } else {
+                    btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i><span>🚀 Avvia Addestramento Istituzionale (50.000 Epoche - 100k Dataset)</span>`;
+                    btn.classList.remove('opacity-75');
+                }
+
+            } catch (err) {
+                console.error("Errore polling:", err);
+            }
+        }
+
+        async function startTraining() {
+            try {
+                await fetch('/api/training/start', { method: 'POST' });
+            } catch (e) {
+                alert("Errore avvio training: " + e.message);
+            }
+        }
+
+        async function applyOptimalParams() {
+            try {
+                const res = await fetch('/api/training/apply', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    alert(`✅ PARAMETRI OTTIMALI APPLICATI AL BOT LIVE!\n\nGamma (γ): ${data.applied.gamma}\nSpread Minimo: ${data.applied.delta_min_ticks} ticks\nMax Exposure: ${data.applied.q_max_usdc}$`);
+                }
+            } catch (e) {
+                alert("Errore applicazione parametri: " + e.message);
+            }
+        }
+
+        window.onload = () => {
+            lucide.createIcons();
+            initCharts();
+            fetchDataset();
+            setInterval(pollTrainingStatus, 1000);
+        };
+    </script>
+</body>
+</html>

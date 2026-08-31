@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polymarket — Simulazione Live L2 FIFO Matching Engine (Homerun-Style)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            900: '#0b0f19',
+                            800: '#111827',
+                            700: '#1f2937',
+                            600: '#374151'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass {
+            background: rgba(17, 24, 39, 0.85);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex bg-[#0b0f19] text-gray-100 antialiased overflow-x-hidden">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="w-64 min-w-[16rem] h-screen sticky top-0 bg-[#070b14] border-r border-gray-800/90 flex flex-col justify-between p-4 z-50 shrink-0 pointer-events-auto select-none">
+        <div class="space-y-6">
+            <!-- BRANDING -->
+            <div class="flex items-center gap-3 px-2 py-1">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 shrink-0">
+                    <i data-lucide="shield-check" class="w-6 h-6 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-base font-extrabold tracking-tight text-white flex items-center gap-1.5">
+                        POLYMARKET
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">AI PRO</span>
+                    </h1>
+                    <p class="text-[11px] text-gray-400 font-medium">Trading & AI Terminal</p>
+                </div>
+            </div>
+
+            <!-- NAVIGATION MENU -->
+            <div class="space-y-1.5">
+                <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-gray-500">Navigazione</p>
+                
+                <a href="/" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="zap" class="w-4 h-4 text-cyan-400"></i>
+                    <span>⚡ Market Making Reale</span>
+                </a>
+
+                <a href="/logical" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="brain" class="w-4 h-4 text-purple-400"></i>
+                    <span>🧠 Spread Logico & APY</span>
+                </a>
+
+                <a href="/training" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="cpu" class="w-4 h-4 text-indigo-400"></i>
+                    <span>🤖 Addestramento AI</span>
+                </a>
+
+                <a href="/simulation" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 bg-emerald-600/25 text-emerald-300 border-emerald-500/40 shadow-sm">
+                    <i data-lucide="gamepad-2" class="w-4 h-4 text-emerald-400"></i>
+                    <span>🎮 Simulazione Live</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- SIDEBAR FOOTER: WALLET & STATUS -->
+        <div class="space-y-3 pt-4 border-t border-gray-800/80">
+            <!-- WALLET STATUS -->
+            <div class="p-2.5 rounded-xl bg-gray-900/90 border border-gray-800 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                    <div class="flex flex-col">
+                        <span class="text-[9px] uppercase font-bold text-gray-400">Polygon Chain 137</span>
+                        <span class="text-[11px] font-bold mono text-gray-200">0xb41E...7CAf</span>
+                    </div>
+                </div>
+                <i data-lucide="wallet" class="w-4 h-4 text-gray-500"></i>
+            </div>
+
+            <!-- BOT ENGINE CONTROLS -->
+            <div class="grid grid-cols-2 gap-2">
+                <button id="btn-toggle-sim" onclick="toggleSimulation()" class="w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-emerald-500 hover:bg-emerald-600 text-black flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/20 active:scale-95">
+                    <i data-lucide="pause" class="w-3.5 h-3.5"></i>
+                    <span>In Esecuzione</span>
+                </button>
+                <button onclick="resetSimulation()" class="w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 flex items-center justify-center gap-1.5 transition-all active:scale-95" title="Resetta Portafoglio">
+                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-gray-400"></i>
+                    <span>Reset</span>
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTAINER -->
+    <main class="flex-1 min-h-screen overflow-y-auto p-6 space-y-6">
+
+        <!-- HEADER BANNER -->
+        <div class="glass rounded-2xl p-5 border border-emerald-500/30 bg-gradient-to-r from-gray-900 via-gray-900 to-emerald-950/20 shadow-xl flex flex-wrap items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-3 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    <i data-lucide="layers" class="w-6 h-6"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-base font-extrabold text-white">L2 FIFO Matching Engine (Adverse Selection & Queue Simulator)</h2>
+                        <span class="px-2 py-0.5 text-[10px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">HOMERUN-STYLE ARCHITECTURE</span>
+                    </div>
+                    <p class="text-xs text-gray-400">I tuoi ordini sono inseriti nella vera coda del book: subiscono sweep di mercato, attesa FIFO e toxic drift reali</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4 KPI CARDS -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            
+            <!-- KPI 1: Patrimonio Netto (Net Equity) -->
+            <div class="glass rounded-2xl p-4 border border-emerald-500/30 bg-emerald-950/10">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400">Patrimonio Totale (Net Equity)</p>
+                        <h2 id="kpi-balance" class="text-2xl font-extrabold mono mt-1 text-emerald-400">100.00 $</h2>
+                    </div>
+                    <div class="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
+                        <i data-lucide="wallet" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <div class="mt-2 flex items-center justify-between text-[10px] mono border-t border-gray-800/80 pt-1.5">
+                    <span class="text-gray-400">Contanti: <strong id="kpi-free-cash" class="text-white">100.00$</strong></span>
+                    <span class="text-gray-400">In Quote: <strong id="kpi-pos-val" class="text-cyan-300">0.00$</strong></span>
+                </div>
+            </div>
+
+            <!-- KPI 2: Chiusure Concluse (Merges + Sells) -->
+            <div class="glass rounded-2xl p-4 border border-gray-800">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400">Chiusure Realizzate</p>
+                        <div class="flex items-center gap-2 mt-1 mono">
+                            <span class="text-xl font-extrabold text-cyan-400" id="kpi-merges">0 Merges</span>
+                            <span class="text-xs text-gray-500">/</span>
+                            <span class="text-sm font-bold text-emerald-400" id="kpi-sells">0 Sells</span>
+                        </div>
+                    </div>
+                    <div class="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
+                        <i data-lucide="sparkles" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <p class="mt-2 text-[10px] text-gray-400">Fusioni Complete a $1.00 + Vendite Take-Profit</p>
+            </div>
+
+            <!-- KPI 3: Fills vs Toxic Losses -->
+            <div class="glass rounded-2xl p-4 border border-gray-800">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-gray-400">Fills vs Toxic Shocks</p>
+                        <div class="flex items-center gap-2 mt-1 mono">
+                            <span class="text-lg font-extrabold text-emerald-400" id="kpi-fills">0 Fills</span>
+                            <span class="text-xs text-gray-500">/</span>
+                            <span class="text-sm font-bold text-rose-400" id="kpi-losses">0 Shocks</span>
+                        </div>
+                    </div>
+                    <div class="p-2 rounded-lg bg-purple-500/10 text-purple-400">
+                        <i data-lucide="activity" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <div class="mt-2 flex items-center gap-1.5 text-[10px] text-gray-400">
+                    <span>Win Rate Matching:</span>
+                    <strong id="kpi-winrate" class="text-purple-300 font-bold">100.0%</strong>
+                </div>
+            </div>
+
+            <!-- KPI 4: Policy Attiva -->
+            <div class="glass rounded-2xl p-4 border border-indigo-500/30 bg-indigo-950/20">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <p class="text-xs font-semibold text-indigo-300">Policy AI & Adaptive Profiling</p>
+                        <div class="mt-1 flex items-center gap-2 mono text-xs font-bold text-white">
+                            <span>Base γ: <strong id="pol-gamma" class="text-purple-400">0.335</strong></span>
+                            <span>Base δ: <strong id="pol-delta" class="text-cyan-400">2t</strong></span>
+                        </div>
+                    </div>
+                    <div class="p-2 rounded-lg bg-indigo-500/20 text-indigo-300">
+                        <i data-lucide="brain-circuit" class="w-4 h-4"></i>
+                    </div>
+                </div>
+                <p class="mt-2 text-[10px] text-indigo-300/80">Parametri calibrati in base al micro-regime del book</p>
+            </div>
+
+        </div>
+
+        <!-- GRAFICO EQUITY LIVE -->
+        <div class="glass rounded-2xl p-5 border border-gray-800">
+            <div class="flex items-center justify-between mb-3 pb-2 border-b border-gray-800">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-white">Curva di Crescita del Capitale Virtuale in Tempo Reale (USD)</h3>
+                </div>
+                <span class="text-[10px] mono text-gray-500">Live Paper Trading Feed</span>
+            </div>
+            <div class="h-60 w-full">
+                <canvas id="equityChart"></canvas>
+            </div>
+        </div>
+
+                <!-- INFOGRAFICA CICLO DI VITA ORDINE (LIFECYCLE PIPELINE) -->
+        <div class="glass rounded-2xl p-4 border border-gray-800 bg-gray-900/60 shadow-lg">
+            <div class="flex items-center gap-2 pb-2 mb-3 border-b border-gray-800">
+                <i data-lucide="git-commit" class="w-4 h-4 text-emerald-400"></i>
+                <h3 class="text-xs font-bold uppercase tracking-wider text-white">Come Funziona il Ciclo di Vita di Ogni Operazione del Bot</h3>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                
+                <!-- FASE 1 -->
+                <div class="p-3 rounded-xl bg-gray-950/60 border border-emerald-500/30 flex flex-col justify-between">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] px-2 py-0.5 rounded font-bold bg-emerald-500/20 text-emerald-400 mono">FASE 1: PIAZZAMENTO</span>
+                        <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-gray-500 hidden md:block"></i>
+                    </div>
+                    <div class="mt-2">
+                        <strong class="text-xs font-bold text-white block">🟢 Ordini Limite Dual-Bid</strong>
+                        <p class="text-[11px] text-gray-400 mt-0.5">Il bot piazza <strong class="text-emerald-300">BUY YES</strong> e <strong class="text-cyan-300">BUY NO</strong> a prezzi inferiori al Fair Value (in attesa nel book L2).</p>
+                    </div>
+                </div>
+
+                <!-- FASE 2 -->
+                <div class="p-3 rounded-xl bg-gray-950/60 border border-cyan-500/30 flex flex-col justify-between">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] px-2 py-0.5 rounded font-bold bg-cyan-500/20 text-cyan-400 mono">FASE 2: APERTURA POSIZIONE</span>
+                        <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-gray-500 hidden md:block"></i>
+                    </div>
+                    <div class="mt-2">
+                        <strong class="text-xs font-bold text-white block">📦 Esecuzione Fill & Accumulo</strong>
+                        <p class="text-[11px] text-gray-400 mt-0.5">Un trader retail vende al tuo prezzo: la posizione si apre a sconto e il bot attende il completamento della coppia.</p>
+                    </div>
+                </div>
+
+                <!-- FASE 3 -->
+                <div class="p-3 rounded-xl bg-gray-950/60 border border-purple-500/30 flex flex-col justify-between">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] px-2 py-0.5 rounded font-bold bg-purple-500/20 text-purple-400 mono">FASE 3: CHIUSURA & PROFITTO</span>
+                        <i data-lucide="check-check" class="w-3.5 h-3.5 text-purple-400"></i>
+                    </div>
+                    <div class="mt-2">
+                        <strong class="text-xs font-bold text-white block">💎 Fusione $1.00 USDC / Take-Profit</strong>
+                        <p class="text-[11px] text-gray-400 mt-0.5">Le quote YES+NO vengono fuse in <strong class="text-emerald-400">1.00$ USDC contanti</strong> a rischio zero, incassando il margine netto.</p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- SEZIONE TABELLE: QUOTAZIONI LIVE CON CODA FIFO (A SINISTRA) + TAPE ESECUZIONI (A DESTRA) -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            <!-- TABELLA LIVE ORDINI & POSIZIONE IN CODA FIFO (8/12) -->
+            <div class="glass rounded-2xl p-5 lg:col-span-8 flex flex-col border border-gray-800">
+                <div class="flex items-center justify-between pb-3 mb-3 border-b border-gray-800">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="list-ordered" class="w-4 h-4 text-cyan-400"></i>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white">Ordini Attivi & Tracciamento Coda FIFO (Q_ahead)</h3>
+                    </div>
+                    <span class="text-[10px] mono text-gray-400 bg-gray-800 px-2 py-0.5 rounded">Microstructure Queue</span>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs">
+                        <thead class="text-gray-400 border-b border-gray-800 uppercase text-[10px] font-semibold">
+                            <tr>
+                                <th class="pb-2">Mercato</th>
+                                <th class="pb-2 text-center">Assetto AI</th>
+                                <th class="pb-2 text-right">AI BID YES</th>
+                                <th class="pb-2 text-right">AI BID NO</th>
+                                <th class="pb-2 text-center">Avanzamento Coda FIFO</th>
+                                <th class="pb-2 text-right">Stato</th>
+                            </tr>
+                        </thead>
+                        <tbody id="quotes-table-body" class="divide-y divide-gray-800/60 text-gray-300 mono text-[11px]">
+                            <tr><td colspan="6" class="py-6 text-center text-gray-500 italic">Connessione al Matching Engine...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- FEED STORICO ESECUZIONI & EVENTI DI MERCATO (4/12) -->
+            <div class="glass rounded-2xl p-5 lg:col-span-4 flex flex-col border border-emerald-500/30 bg-black/60">
+                <div class="flex items-center justify-between pb-2 mb-2 border-b border-gray-800">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-white mono">Matching Engine Tape</h3>
+                    </div>
+                    <span class="text-[10px] mono text-gray-500">Live Fills & Merges</span>
+                </div>
+
+                <div id="sim-trades-list" class="h-80 overflow-y-auto space-y-2 pr-1">
+                    <p class="text-gray-500 italic text-xs p-2">[In attesa che un trade reale incroci le nostre quote...]</p>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- SCRIPT CLIENT -->
+    <script>
+        let equityChart = null;
+
+        function initChart() {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Capitale ($)',
+                        data: [],
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { display: true, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { grid: { color: 'rgba(255,255,255,0.05)' } }
+                    },
+                    plugins: { legend: { labels: { color: '#9ca3af', font: { size: 10 } } } }
+                }
+            });
+        }
+
+        async function pollSimulationStatus() {
+            try {
+                const res = await fetch('/api/simulation/status');
+                const data = await res.json();
+
+                // KPI
+                document.getElementById('kpi-balance').innerText = `${data.virtual_balance.toFixed(2)} $`;
+                if (document.getElementById('kpi-free-cash')) {
+                    document.getElementById('kpi-free-cash').innerText = `${data.free_cash.toFixed(2)}$`;
+                }
+                if (document.getElementById('kpi-pos-val')) {
+                    document.getElementById('kpi-pos-val').innerText = `${data.positions_val.toFixed(2)}$`;
+                }
+                if (document.getElementById('kpi-sells')) {
+                    document.getElementById('kpi-sells').innerText = `${data.total_maker_sells} Sells`;
+                }
+                document.getElementById('kpi-merges').innerText = `${data.total_merges} Merges`;
+                document.getElementById('kpi-fills').innerText = `${data.total_fills} Fills`;
+                document.getElementById('kpi-losses').innerText = `${data.total_toxic_losses} Shocks`;
+                document.getElementById('kpi-winrate').innerText = `${data.win_rate.toFixed(1)} %`;
+
+                if (data.current_policy) {
+                    document.getElementById('pol-gamma').innerText = data.current_policy.gamma.toFixed(3);
+                    document.getElementById('pol-delta').innerText = `${data.current_policy.delta_min_ticks}t`;
+                }
+
+                // Bottone Toggle
+                const btnToggle = document.getElementById('btn-toggle-sim');
+                if (data.is_running) {
+                    btnToggle.innerHTML = `<i data-lucide="pause" class="w-3.5 h-3.5"></i><span>In Esecuzione</span>`;
+                    btnToggle.className = 'w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-emerald-500 hover:bg-emerald-600 text-black flex items-center justify-center gap-1.5 transition-all shadow-md shadow-emerald-500/20 active:scale-95';
+                } else {
+                    btnToggle.innerHTML = `<i data-lucide="play" class="w-3.5 h-3.5"></i><span>In Pausa</span>`;
+                    btnToggle.className = 'w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-amber-500 hover:bg-amber-600 text-black flex items-center justify-center gap-1.5 transition-all shadow-md shadow-amber-500/20 active:scale-95';
+                }
+
+                // Tabella Quote Attive con Coda FIFO
+                if (data.active_quotes && data.active_quotes.length > 0) {
+                    const qBody = document.getElementById('quotes-table-body');
+                    qBody.innerHTML = data.active_quotes.map(q => {
+                        const avgPct = Math.round((q.queue_yes_pct + q.queue_no_pct) / 2);
+                        return `
+                        <tr class="hover:bg-gray-800/40">
+                            <td class="py-2.5 text-white font-semibold truncate max-w-[150px]" title="${q.market}">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="text-[9px] px-1 py-0.2 rounded font-bold ${q.category === 'CRYPTO' ? 'bg-amber-500/20 text-amber-300' : (q.category === 'MACRO' ? 'bg-cyan-500/20 text-cyan-300' : 'bg-purple-500/20 text-purple-300')}">${q.category}</span>
+                                    <span>${q.market}</span>
+                                </div>
+                            </td>
+                            <td class="py-2.5 text-center mono text-[10px]">
+                                <span class="text-purple-300 font-bold">γ: ${q.market_gamma.toFixed(2)}</span> | 
+                                <span class="text-cyan-300 font-bold">δ: ${q.market_delta_ticks}t</span>
+                            </td>
+                            <td class="py-2.5 text-right text-emerald-400 font-bold">${q.ai_bid_yes.toFixed(3)}$</td>
+                            <td class="py-2.5 text-right text-cyan-400 font-bold">${q.ai_bid_no.toFixed(3)}$</td>
+                            <td class="py-2.5 text-center px-2">
+                                <div class="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+                                    <div class="bg-gradient-to-r from-cyan-500 to-emerald-400 h-2 rounded-full transition-all duration-500" style="width: ${avgPct}%"></div>
+                                </div>
+                                <span class="text-[9px] text-gray-400 mt-0.5 block">${avgPct}% (Davanti: ${q.queue_yes_ahead}$ YES)</span>
+                            </td>
+                            <td class="py-2.5 text-right">
+                                <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${q.status.includes('ESEGUITO') || q.status.includes('Completato') ? 'bg-emerald-500/20 text-emerald-300 animate-pulse' : 'bg-gray-800 text-gray-400'}">
+                                    ${q.status}
+                                </span>
+                            </td>
+                        </tr>
+                        `;
+                    }).join('');
+                }
+
+                // Feed Esecuzioni e Tape Matching
+                if (data.trade_history && data.trade_history.length > 0) {
+                    const tList = document.getElementById('sim-trades-list');
+                    tList.innerHTML = data.trade_history.map(t => {
+                        const isMerge = t.type === 'MERGE';
+                        const isLoss = t.type === 'LOSS';
+                        const borderCls = isMerge ? 'border-emerald-500/40 bg-emerald-950/20' : (isLoss ? 'border-rose-500/40 bg-rose-950/20' : 'border-gray-800 bg-gray-900/90');
+                        const pnlColor = isMerge ? 'text-emerald-400' : (isLoss ? 'text-rose-400' : 'text-cyan-300');
+
+                        return `
+                        <div class="p-2.5 rounded-xl border ${borderCls} flex items-center justify-between gap-2">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[10px] text-gray-400 mono">${t.timestamp}</span>
+                                    <span class="text-xs font-bold text-white truncate max-w-[150px]">${t.market}</span>
+                                </div>
+                                <p class="text-[11px] text-gray-300 mt-0.5">${t.details}</p>
+                            </div>
+                            <div class="text-right shrink-0">
+                                <span class="text-xs font-extrabold ${pnlColor} mono">${t.pnl}</span>
+                                <span class="block text-[9px] font-bold ${isMerge ? 'text-emerald-300' : (isLoss ? 'text-rose-400' : 'text-gray-400')}">${t.event}</span>
+                            </div>
+                        </div>
+                        `;
+                    }).join('');
+                }
+
+                // Aggiorna Grafico Equity
+                if (data.equity_curve && data.equity_curve.timestamps.length > 0) {
+                    equityChart.data.labels = data.equity_curve.timestamps;
+                    equityChart.data.datasets[0].data = data.equity_curve.balances;
+                    equityChart.update();
+                }
+
+                lucide.createIcons();
+
+            } catch (err) {
+                console.error("Errore polling simulazione:", err);
+            }
+        }
+
+        async function toggleSimulation() {
+            try {
+                await fetch('/api/simulation/toggle', { method: 'POST' });
+            } catch (e) {
+                alert("Errore toggle: " + e.message);
+            }
+        }
+
+        async function resetSimulation() {
+            if (confirm("Vuoi resettare il Matching Engine e il saldo a 100$ USDC?")) {
+                try {
+                    await fetch('/api/simulation/reset', { method: 'POST' });
+                } catch (e) {
+                    alert("Errore reset: " + e.message);
+                }
+            }
+        }
+
+        window.onload = () => {
+            lucide.createIcons();
+            initChart();
+            setInterval(pollSimulationStatus, 1500);
+        };
+    </script>
+</body>
+</html>
