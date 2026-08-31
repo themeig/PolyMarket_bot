@@ -1,5 +1,5 @@
 """
-ON-CHAIN & GASLESS POSITION MERGER FOR POLYMARKET (YES + NO -> USDC)
+ON-CHAIN & GASLESS POSITION MERGER AND REDEEMER FOR POLYMARKET (YES + NO -> USDC & Finished Events)
 Supports Gnosis CTF, NegRisk Adapter, and Polymarket Builder Relayer.
 """
 
@@ -28,6 +28,18 @@ _CTF_ABI = [
             {"name": "amount", "type": "uint256"},
         ],
         "outputs": [],
+    },
+    {
+        "name": "redeemPositions",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"},
+        ],
+        "outputs": [],
     }
 ]
 
@@ -39,6 +51,16 @@ _NEG_RISK_ABI = [
         "inputs": [
             {"name": "conditionId", "type": "bytes32"},
             {"name": "amount", "type": "uint256"},
+        ],
+        "outputs": [],
+    },
+    {
+        "name": "redeemPositions",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"},
         ],
         "outputs": [],
     }
@@ -75,7 +97,7 @@ class TokenMerger:
 
     def find_mergeable_pairs(self, positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Scans positions grouping by exact conditionId to detect matching YES and NO pairs.
+        Scans positions grouping by exact conditionId to detect matching YES and NO pairs retroactively and currently.
         """
         cond_map = {}
         for p in positions:
@@ -115,6 +137,21 @@ class TokenMerger:
                     "tokens": data["tokens"]
                 })
         return mergeable
+
+    def find_redeemable_positions(self, positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Scans positions for finished/resolved markets ready to be redeemed.
+        """
+        redeemable = []
+        for p in positions:
+            if p.get("redeemable") and float(p.get("size", 0) or 0) >= 0.1:
+                redeemable.append({
+                    "condition_id": p.get("conditionId"),
+                    "market": p.get("title", "Mercato Concluso"),
+                    "size": float(p.get("size", 0)),
+                    "is_neg_risk": p.get("negativeRisk", False)
+                })
+        return redeemable
 
     def execute_merge(self, condition_id: str, amount_shares: float, is_neg_risk: bool = True) -> Optional[str]:
         """
