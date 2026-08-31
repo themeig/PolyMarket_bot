@@ -1110,17 +1110,19 @@
                 const screenerBody = document.getElementById('screener-table-body');
                 if (screenerBody && data.screener && data.screener.length > 0) {
                     screenerBody.innerHTML = data.screener.map(m => {
+                        const isRewards = (m.strategy === 'REWARDS');
                         const isHFT = (m.strategy === 'HFT');
                         const safeTitle = safeText(m.Mercato);
+                        const badgeClass = isRewards ? 'text-emerald-300 font-extrabold bg-emerald-500/20 px-2 py-0.5 rounded border border-emerald-500/30' : (isHFT ? 'text-cyan-400 font-bold' : 'text-amber-400 font-bold');
                         return `
                             <tr class="hover:bg-gray-800/40 cursor-pointer" onclick="selectOrderMarket('${m.token_id || ''}', '${safeTitle}')">
-                                <td class="py-2.5 font-bold ${isHFT ? 'text-cyan-400' : 'text-amber-400'} text-[10px] uppercase">${m.badge || (isHFT ? '⚡ HFT' : '💎 WIDE')}</td>
-                                <td class="py-2.5 font-medium text-gray-300 truncate max-w-[180px]" title="${safeTitle}">${m.Mercato}</td>
-                                <td class="py-2.5 text-right text-emerald-400">${m['Mio BID (Compra)']}</td>
-                                <td class="py-2.5 text-right text-cyan-400">${m['Mio ASK (Vendi)']}</td>
-                                <td class="py-2.5 text-right font-extrabold text-white">${m['Margine Netto']}</td>
-                                <td class="py-2.5 text-right text-gray-400">${m['Vol 24h']}</td>
-                                <td class="py-2.5 text-right text-gray-400">${m['Liquidita']}</td>
+                                <td class="py-2.5 text-[10px] uppercase"><span class="${badgeClass}">${m.badge || (isRewards ? '🎁 REWARDS' : (isHFT ? '⚡ HFT' : '💎 WIDE'))}</span></td>
+                                <td class="py-2.5 font-medium text-gray-200 truncate max-w-[180px]" title="${safeTitle}">${m.Mercato}</td>
+                                <td class="py-2.5 text-right text-emerald-400 font-mono font-bold">${m['Mio BID (Compra)']}</td>
+                                <td class="py-2.5 text-right text-cyan-400 font-mono font-bold">${m['Mio ASK (Vendi)']}</td>
+                                <td class="py-2.5 text-right font-extrabold text-white font-mono">${m['Margine Netto']}</td>
+                                <td class="py-2.5 text-right text-gray-400 font-mono">${m['Vol 24h']}</td>
+                                <td class="py-2.5 text-right text-gray-400 font-mono">${m['Liquidita']}</td>
                             </tr>
                         `;
                     }).join('');

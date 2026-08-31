@@ -1,7 +1,8 @@
 """
 =============================================================================
-POLYMARKET STEP 2: DUAL-ENGINE SMART SCREENER (WITH SPORTS FILTER)
+POLYMARKET STEP 2: DUAL-ALPHA REWARDS & SMART SCREENER
 =============================================================================
+Combines HFT Market Making, Wide Spread, and Polymarket Liquidity Rewards.
 """
 
 import sys
@@ -78,7 +79,7 @@ async def fetch_markets_batch(session, offset=0, limit=100):
     except Exception:
         return []
 
-async def get_all_active_markets(total_to_fetch=1500):
+async def get_all_active_markets(total_to_fetch=1200):
     batch_size = 100
     offsets = range(0, total_to_fetch, batch_size)
     t_start = time.time()
@@ -92,6 +93,7 @@ async def get_all_active_markets(total_to_fetch=1500):
     return all_markets, elapsed
 
 def filter_dual_engine_markets(markets, exclude_sports=True):
+    rewards_markets = []
     hft_markets = []
     wide_spread_markets = []
 
@@ -105,13 +107,22 @@ def filter_dual_engine_markets(markets, exclude_sports=True):
         updated_at = m.get("updatedAt", "")
         last_trade_p = m.get("lastTradePrice")
         
-        # FILTRO SPORT: Esclude qualsiasi evento sportivo se richiesto
+        # FILTRO SPORT
         if exclude_sports and is_sports_market(question):
             continue
 
         tokens_raw = m.get("clobTokenIds", "[]")
         tokens = json.loads(tokens_raw) if isinstance(tokens_raw, str) else tokens_raw
         token_id = tokens[0] if tokens else ""
+
+        # Rewards extraction
+        clob_rewards = m.get("clobRewards", [])
+        r_daily = float(m.get("rewardDailyRate", 0) or m.get("rewardsDailyRate", 0) or 0)
+        if clob_rewards and r_daily == 0:
+            for cr in clob_rewards:
+                r_daily += float(cr.get("rewardsDailyRate", 0) or 0)
+        r_min_size = float(m.get("rewardsMinSize", 0) or 0)
+        r_max_spread = float(m.get("rewardsMaxSpread", 0) or 0)
 
         if best_bid is None or best_ask is None or best_bid <= 0 or best_ask <= 0:
             continue
@@ -125,14 +136,38 @@ def filter_dual_engine_markets(markets, exclude_sports=True):
         net_spread_capture = round(my_ask - my_bid, 3)
         net_spread_pct = round((net_spread_capture / mid_price) * 100.0, 1)
 
-        if my_ask <= my_bid or net_spread_capture < 0.003:
-            continue
-
         time_ago_str = format_iso_time_ago(updated_at)
         last_p_str = f"{last_trade_p:.3f} $" if last_trade_p is not None else "-"
 
-        # CATEGORIA 1: HFT (Volume > $2.000, Spread Stretto 0.5% - 20%, Esecuzione Rapida)
-        if volume_24h >= 2000 and 0.5 <= spread_pct <= 25.0 and 0.06 <= best_bid <= 0.94:
+        # CATEGORIA 0: DUAL-ALPHA REWARDS (Mercati con montepremi giornaliero attivo)
+        if (r_daily > 0 or len(clob_rewards) > 0) and r_min_size > 0 and 0.03 <= best_bid <= 0.97:
+            r_score = round(min(100.0, (r_daily * 2.0) + (volume_24h / 500.0)), 1)
+            rewards_markets.append({
+                "id": market_id,
+                "token_id": token_id,
+                "clob_token_ids": tokens,
+                "raw_best_bid": best_bid,
+                "raw_best_ask": best_ask,
+                "strategy": "REWARDS",
+                "badge": f"🎁 REWARDS ({r_daily:.0f}$/gg)",
+                "Score": r_score,
+                "Mercato": question[:42] + ("..." if len(question) > 42 else ""),
+                "Mid Price": f"{mid_price:.3f} $",
+                "Best Bid": f"{best_bid:.3f} $",
+                "Mio BID (Compra)": f"{my_bid:.3f} $",
+                "Mio ASK (Vendi)": f"{my_ask:.3f} $",
+                "Best Ask": f"{best_ask:.3f} $",
+                "Margine Netto": f"+{net_spread_capture:.3f} $ ({net_spread_pct}%)",
+                "Ultimo Trade": f"{last_p_str} ({time_ago_str})",
+                "Vol 24h": f"{volume_24h:,.0f} $",
+                "Liquidita": f"{liquidity:,.0f} $",
+                "rewards_daily": r_daily,
+                "rewards_min_size": r_min_size,
+                "rewards_max_spread": r_max_spread
+            })
+
+        # CATEGORIA 1: HFT (Volume > $2.000, Spread Stretto 0.5% - 25%)
+        if volume_24h >= 2000 and 0.5 <= spread_pct <= 25.0 and 0.06 <= best_bid <= 0.94 and my_ask > my_bid:
             vol_score = min(100.0, (math.log10(volume_24h) / 5.5) * 100.0)
             score = round(vol_score * 0.70 + min(100.0, liquidity / 500.0) * 0.30, 1)
             hft_markets.append({
@@ -153,11 +188,14 @@ def filter_dual_engine_markets(markets, exclude_sports=True):
                 "Margine Netto": f"+{net_spread_capture:.3f} $ ({net_spread_pct}%)",
                 "Ultimo Trade": f"{last_p_str} ({time_ago_str})",
                 "Vol 24h": f"{volume_24h:,.0f} $",
-                "Liquidita": f"{liquidity:,.0f} $"
+                "Liquidita": f"{liquidity:,.0f} $",
+                "rewards_daily": r_daily,
+                "rewards_min_size": r_min_size,
+                "rewards_max_spread": r_max_spread
             })
 
-        # CATEGORIA 2: WIDE SPREAD (Spread Largo > 15%, Margine Alto +30% / +80%)
-        if spread >= 0.02 and spread_pct >= 15.0 and volume_24h >= 30 and 0.04 <= best_bid <= 0.85:
+        # CATEGORIA 2: WIDE SPREAD (Spread Largo > 15%, Margine Alto)
+        if spread >= 0.02 and spread_pct >= 15.0 and volume_24h >= 30 and 0.04 <= best_bid <= 0.85 and my_ask > my_bid:
             spread_score = min(100.0, (spread_pct / 50.0) * 100.0)
             score = round(spread_score * 0.60 + min(100.0, math.log10(max(10, volume_24h)) * 25) * 0.40, 1)
             wide_spread_markets.append({
@@ -178,10 +216,14 @@ def filter_dual_engine_markets(markets, exclude_sports=True):
                 "Margine Netto": f"+{net_spread_capture:.3f} $ ({net_spread_pct}%)",
                 "Ultimo Trade": f"{last_p_str} ({time_ago_str})",
                 "Vol 24h": f"{volume_24h:,.0f} $",
-                "Liquidita": f"{liquidity:,.0f} $"
+                "Liquidita": f"{liquidity:,.0f} $",
+                "rewards_daily": r_daily,
+                "rewards_min_size": r_min_size,
+                "rewards_max_spread": r_max_spread
             })
 
+    rewards_markets = sorted(rewards_markets, key=lambda x: x["Score"], reverse=True)
     hft_markets = sorted(hft_markets, key=lambda x: x["Score"], reverse=True)
     wide_spread_markets = sorted(wide_spread_markets, key=lambda x: x["Score"], reverse=True)
     
-    return hft_markets, wide_spread_markets
+    return rewards_markets, hft_markets, wide_spread_markets

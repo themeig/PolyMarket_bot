@@ -116,6 +116,7 @@ class CompletePolymarketQuantBot:
         self.killswitch_triggered = False
         self.active_real_orders = []
         self.trade_history = []
+        self.rewards_screener = []
         self.hft_screener = []
         self.wide_screener = []
         self.current_screener = []
@@ -311,12 +312,12 @@ class CompletePolymarketQuantBot:
                 pass
 
         # =========================================================================
-        # 2. SCREENER (MARKET MAKING + SPREAD LOGICO)
+        # 2. SCREENER (DUAL-ALPHA REWARDS + MARKET MAKING + SPREAD LOGICO)
         # =========================================================================
         if (time.time() - self.last_scan_time) >= 10:
             markets, _ = await get_all_active_markets(total_to_fetch=1200)
-            self.hft_screener, self.wide_screener = filter_dual_engine_markets(markets, exclude_sports=self.exclude_sports)
-            self.current_screener = (self.hft_screener[:4] + self.wide_screener[:4])
+            self.rewards_screener, self.hft_screener, self.wide_screener = filter_dual_engine_markets(markets, exclude_sports=self.exclude_sports)
+            self.current_screener = (self.rewards_screener[:4] + self.hft_screener[:2] + self.wide_screener[:2])
             for m in markets:
                 for clob_id in m.get("clob_token_ids", []):
                     self.market_names_cache[str(clob_id)] = m.get("question", "")
@@ -330,14 +331,15 @@ class CompletePolymarketQuantBot:
                 pass
 
         # =========================================================================
-        # 3. PIAZZAMENTO NUOVI ORDINI DI ACQUISTO (AVELLANEDA-STOIKOV DUAL-BIDDING)
+        # 3. PIAZZAMENTO NUOVI ORDINI DI ACQUISTO (DUAL-ALPHA REWARDS + AVELLANEDA-STOIKOV)
         # =========================================================================
         avail_collateral = self.get_clob_collateral()
         busy_tokens = open_buy_assets.union(open_sell_assets)
 
-        # Motore Avellaneda-Stoikov Dual-Bidding (BUY YES + BUY NO con Skew)
-        if self.enable_as_mm and avail_collateral >= (self.max_order_spend * 1.5) and len(open_orders) < self.max_total_open_orders:
-            for cand in (self.hft_screener + self.wide_screener)[:6]:
+        # Motore Avellaneda-Stoikov Dual-Bidding con Priorità Rewards
+        if self.enable_as_mm and avail_collateral >= 2.0 and len(open_orders) < self.max_total_open_orders:
+            candidates = (self.rewards_screener + self.hft_screener + self.wide_screener)[:8]
+            for cand in candidates:
                 token_id_yes = str(cand.get("token_id", ""))
                 tokens_raw = cand.get("clob_token_ids", [])
                 if isinstance(tokens_raw, list) and len(tokens_raw) >= 2:
@@ -352,6 +354,9 @@ class CompletePolymarketQuantBot:
                 m_id = str(cand.get("id", token_id_yes))
                 yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
                 yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
+                r_min_size = float(cand.get("rewards_min_size", 0) or 0)
+                r_max_spread = float(cand.get("rewards_max_spread", 0) or 0)
+                r_daily = float(cand.get("rewards_daily", 0) or 0)
 
                 # Calcolo Avellaneda-Stoikov
                 as_res = self.as_engine.compute_quotes(
@@ -369,17 +374,28 @@ class CompletePolymarketQuantBot:
                     "vol": as_res.volatility,
                     "yes_bid": as_res.yes_bid_price,
                     "no_bid": as_res.no_bid_price,
-                    "expected_edge": as_res.expected_edge
+                    "expected_edge": as_res.expected_edge,
+                    "rewards_daily": r_daily,
+                    "rewards_min_size": r_min_size
                 }
 
-                if as_res.yes_bid_price and as_res.no_bid_price and as_res.expected_edge >= 0.003:
-                    size_yes = max(5.0, round(as_res.yes_shares, 1))
-                    size_no = max(5.0, round(as_res.no_shares, 1))
+                if as_res.yes_bid_price and as_res.no_bid_price and as_res.expected_edge >= 0.002:
+                    # Se il mercato ha Rewards, adatta la size per soddisfare la soglia minima
+                    if r_min_size > 0 and (r_min_size * (as_res.yes_bid_price + as_res.no_bid_price)) <= avail_collateral:
+                        size_yes = r_min_size
+                        size_no = r_min_size
+                        badge_type = f"🎁 DUAL-ALPHA REWARDS ({r_daily:.0f}$/gg)"
+                    else:
+                        size_yes = max(5.0, round(as_res.yes_shares, 1))
+                        size_no = max(5.0, round(as_res.no_shares, 1))
+                        badge_type = "🧠 AVELLANEDA-STOIKOV"
+
                     cost_yes = round(size_yes * as_res.yes_bid_price, 2)
                     cost_no = round(size_no * as_res.no_bid_price, 2)
+
                     if avail_collateral >= (cost_yes + cost_no):
                         try:
-                            print(f"[{now_str}] 🧠 AVELLANEDA-STOIKOV DUAL-BID su '{cand['Mercato'][:22]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) (Edge: +{as_res.expected_edge:.3f}$)")
+                            print(f"[{now_str}] {badge_type} su '{cand['Mercato'][:20]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) | Spesa: {(cost_yes+cost_no):.2f}$ | Edge: +{as_res.expected_edge:.3f}$")
                             # 1. Order YES
                             args_yes = OrderArgs(price=round(as_res.yes_bid_price, 3), size=size_yes, side=BUY, token_id=token_id_yes)
                             res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
@@ -388,13 +404,13 @@ class CompletePolymarketQuantBot:
                             res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
 
                             if (res_yes.get("success") or res_yes.get("orderID")) and (res_no.get("success") or res_no.get("orderID")):
-                                print(f"[+] ✅ DUAL-BIDDING AVELLANEDA-STOIKOV PIAZZATO CON SUCCESSO SUL BOOK!")
+                                print(f"[+] ✅ DUAL-ALPHA PIAZZATO CON SUCCESSO SUL BOOK (Qualificato per Rewards + Spread)!")
                                 busy_tokens.add(token_id_yes)
                                 busy_tokens.add(token_id_no)
                                 avail_collateral -= (cost_yes + cost_no)
                                 break
                         except Exception as as_err:
-                            print(f"[!] Errore piazzamento Avellaneda: {as_err}")
+                            print(f"[!] Errore piazzamento Dual-Alpha: {as_err}")
 
 
 
@@ -527,7 +543,8 @@ async def handle_status(request):
             "sell_orders": sell_orders,
             "active_orders": buy_orders + sell_orders,
             "positions": formatted_positions,
-            "screener": engine.current_screener,
+            "screener": getattr(engine, "rewards_screener", [])[:4] + getattr(engine, "hft_screener", [])[:2] + getattr(engine, "wide_screener", [])[:2],
+            "rewards_screener": getattr(engine, "rewards_screener", []),
             "trades": getattr(engine, "cached_trades", []) + engine.trade_history[-10:],
             "running": engine.running,
             "killswitch": engine.killswitch_triggered,
