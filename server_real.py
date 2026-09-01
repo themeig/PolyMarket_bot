@@ -288,7 +288,8 @@ class CompletePolymarketQuantBot:
                         now_ts = time.time()
                         for pos in positions:
                             size = float(pos.get("size", 0) or 0)
-                            if size < 0.5:
+                            cur_val = float(pos.get("currentValue", 0) or 0)
+                            if size < 0.5 or cur_val <= 0.001:
                                 continue
                             avg_p = float(pos.get("avgPrice", 0) or 0)
                             cur_p = float(pos.get("curPrice", 0) or 0)
@@ -395,11 +396,16 @@ class CompletePolymarketQuantBot:
 
         # Circuit Breaker Globale: Daily Loss Kill-Switch (poly-maker style)
         current_equity = avail_collateral + getattr(self, "cached_positions_val", 0.0)
-        daily_loss = current_equity - self.day_start_equity
-        if daily_loss <= -self.daily_loss_kill_usdc:
-            if self.market_regime != "HALTED":
-                print(f"[{now_str}] 🛑 GLOBAL RISK BREAKER: Perdita giornaliera ({daily_loss:.2f}$) ha superato il limite (-{self.daily_loss_kill_usdc:.2f}$). Passaggio in HALTED (Solo Exits & Merges)!")
-                self.market_regime = "HALTED"
+        if getattr(self, "day_start_equity", None) is None or self.day_start_equity <= 0:
+            if current_equity > 0:
+                self.day_start_equity = current_equity
+
+        if getattr(self, "day_start_equity", 0) > 0:
+            daily_loss = current_equity - self.day_start_equity
+            if daily_loss <= -self.daily_loss_kill_usdc:
+                if self.market_regime != "HALTED":
+                    print(f"[{now_str}] 🛑 GLOBAL RISK BREAKER: Perdita giornaliera ({daily_loss:.2f}$) ha superato il limite (-{self.daily_loss_kill_usdc:.2f}$). Passaggio in HALTED (Solo Exits & Merges)!")
+                    self.market_regime = "HALTED"
 
         # Se siamo in HALTED, non piazziamo nuovi ordini di acquisto per proteggere il capitale
         if self.market_regime == "HALTED":
@@ -438,13 +444,25 @@ class CompletePolymarketQuantBot:
                         continue
 
                     m_id = str(cand.get("id", token_id_yes))
-                    yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
-                    yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
                     r_min_size = float(cand.get("rewards_min_size", 0) or 0)
                     r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
                     r_daily = float(cand.get("rewards_daily", 0) or 0)
 
-                    # Calcolo Avellaneda-Stoikov
+                    # Fetch prezzi touch live dal book CLOB
+                    yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
+                    yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
+                    try:
+                        book_y = self.client.get_order_book(token_id_yes)
+                        bids_y = book_y.get("bids", []) if isinstance(book_y, dict) else getattr(book_y, "bids", [])
+                        asks_y = book_y.get("asks", []) if isinstance(book_y, dict) else getattr(book_y, "asks", [])
+                        if bids_y:
+                            yes_bid_live = float(bids_y[0].get("price") if isinstance(bids_y[0], dict) else bids_y[0].price)
+                        if asks_y:
+                            yes_ask_live = float(asks_y[0].get("price") if isinstance(asks_y[0], dict) else asks_y[0].price)
+                    except Exception:
+                        pass
+
+                    # Calcolo Avellaneda-Stoikov & Clamping rigoroso dentro la banda Rewards
                     as_res = self.as_engine.compute_quotes(
                         market_id=m_id,
                         yes_best_bid=yes_bid_live,
@@ -453,22 +471,21 @@ class CompletePolymarketQuantBot:
                         no_best_ask=round(1.0 - yes_bid_live, 3) if yes_bid_live else None
                     )
 
-                    # Clamping dello spread dentro la banda ufficiale delle Rewards
-                    if r_max_spread_c > 0:
-                        max_half_spread = (r_max_spread_c / 100.0) / 2.0
-                        if as_res.half_spread > max_half_spread:
-                            as_res.half_spread = max_half_spread
-                            as_res.yes_bid_price = round(as_res.reservation_price - max_half_spread, 3)
-                            as_res.no_bid_price = round((1.0 - as_res.reservation_price) - max_half_spread, 3)
+                    mid_live = (yes_bid_live + yes_ask_live) / 2.0 if (yes_bid_live > 0 and yes_ask_live < 1.0) else as_res.fair_value
+                    max_half_spread = (r_max_spread_c / 100.0) / 2.0 if r_max_spread_c > 0 else 0.02
+
+                    # Prezzi Target rigorosamente In-Band (Entro rewardsMaxSpread dal Midpoint)
+                    yes_quote_p = max(0.001, min(0.999, round(mid_live - max_half_spread, 3)))
+                    no_quote_p = max(0.001, min(0.999, round((1.0 - mid_live) - max_half_spread, 3)))
 
                     self.last_as_quotes[m_id] = {
                         "market": cand.get("Mercato", ""),
                         "fair_value": as_res.fair_value,
                         "r": as_res.reservation_price,
-                        "delta": as_res.half_spread,
+                        "delta": max_half_spread,
                         "vol": as_res.volatility,
-                        "yes_bid": as_res.yes_bid_price,
-                        "no_bid": as_res.no_bid_price,
+                        "yes_bid": yes_quote_p,
+                        "no_bid": no_quote_p,
                         "expected_edge": as_res.expected_edge,
                         "rewards_daily": r_daily,
                         "rewards_min_size": r_min_size
@@ -478,18 +495,18 @@ class CompletePolymarketQuantBot:
                     size_yes = r_min_size
                     size_no = r_min_size
 
-                    cost_yes = round(size_yes * as_res.yes_bid_price, 2)
-                    cost_no = round(size_no * as_res.no_bid_price, 2)
+                    cost_yes = round(size_yes * yes_quote_p, 2)
+                    cost_no = round(size_no * no_quote_p, 2)
                     total_required_cost = cost_yes + cost_no
 
                     # Verifica collaterale: se il saldo non copre la min_size, NON piazza ordini parziali
-                    if avail_collateral >= total_required_cost and as_res.expected_edge >= 0.002:
+                    if avail_collateral >= total_required_cost:
                         try:
-                            print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS QUALIFICATO ({r_daily:.0f}$/gg) su '{cand['Mercato'][:20]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) | Spesa: {total_required_cost:.2f}$ | Spread: entro {r_max_spread_c}c")
+                            print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS QUALIFICATO ({r_daily:.0f}$/gg) su '{cand['Mercato'][:20]}': BUY YES @ {yes_quote_p:.3f}$ ({size_yes}q) + BUY NO @ {no_quote_p:.3f}$ ({size_no}q) | Spesa: {total_required_cost:.2f}$ | Spread: entro {r_max_spread_c}c")
                             
                             # 1. Crea entrambi gli ordini
-                            args_yes = OrderArgs(price=round(as_res.yes_bid_price, 3), size=size_yes, side=BUY, token_id=token_id_yes)
-                            args_no = OrderArgs(price=round(as_res.no_bid_price, 3), size=size_no, side=BUY, token_id=token_id_no)
+                            args_yes = OrderArgs(price=yes_quote_p, size=size_yes, side=BUY, token_id=token_id_yes)
+                            args_no = OrderArgs(price=no_quote_p, size=size_no, side=BUY, token_id=token_id_no)
 
                             res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
                             yes_id = res_yes.get("id") or res_yes.get("orderID") if (res_yes.get("success") or res_yes.get("orderID")) else None
