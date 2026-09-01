@@ -368,12 +368,12 @@ class CompletePolymarketQuantBot:
         if self.enable_as_mm:
             reward_candidates = [
                 c for c in self.rewards_screener 
-                if float(c.get("rewards_min_size", 0) or 0) > 0 and float(c.get("rewards_daily", 0) or 0) > 0
+                if 0 < float(c.get("rewards_min_size", 0) or 0) <= 25 and float(c.get("rewards_daily", 0) or 0) > 0
             ]
 
             reward_candidates = sorted(
                 reward_candidates, 
-                key=lambda x: (float(x.get("rewards_min_size", 999)) <= 50, float(x.get("rewards_daily", 0))), 
+                key=lambda x: float(x.get("rewards_daily", 0)), 
                 reverse=True
             )
 
@@ -416,8 +416,8 @@ class CompletePolymarketQuantBot:
                 yes_quote_p = max(0.01, min(0.99, round(mid_live - max_half_spread, 2)))
                 no_quote_p = max(0.01, min(0.99, round((1.0 - mid_live) - max_half_spread, 2)))
 
-                size_yes = max(r_min_size, 20.0)
-                size_no = max(r_min_size, 20.0)
+                size_yes = r_min_size
+                size_no = r_min_size
 
                 cost_yes = round(size_yes * yes_quote_p, 2)
                 cost_no = round(size_no * no_quote_p, 2)

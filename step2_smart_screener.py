@@ -139,8 +139,8 @@ def filter_dual_engine_markets(markets, exclude_sports=True):
         time_ago_str = format_iso_time_ago(updated_at)
         last_p_str = f"{last_trade_p:.3f} $" if last_trade_p is not None else "-"
 
-        # CATEGORIA 0: DUAL-ALPHA REWARDS (Mercati bilanciati per Dual-Bidding perfetto 0.25-0.75)
-        if (r_daily > 0 or len(clob_rewards) > 0) and r_min_size > 0 and 0.25 <= mid_price <= 0.75:
+        # CATEGORIA 0: DUAL-ALPHA REWARDS (Mercati 100% qualificabili con il nostro saldo: min_size <= 30 e 0.20 <= mid <= 0.80)
+        if (r_daily > 0 or len(clob_rewards) > 0) and 0 < r_min_size <= 30 and 0.20 <= mid_price <= 0.80:
             r_score = round(min(100.0, (r_daily * 2.0) + (volume_24h / 500.0)), 1)
             rewards_markets.append({
                 "id": market_id,
