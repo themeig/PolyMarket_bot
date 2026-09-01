@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="it" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>poly-maker — Terminale Istituzionale Avellaneda-Stoikov</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            900: '#0b0f19',
+                            800: '#111827',
+                            700: '#1f2937',
+                            600: '#374151'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass {
+            background: rgba(17, 24, 39, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+        }
+        .glow-amber {
+            box-shadow: 0 0 25px -5px rgba(245, 158, 11, 0.25);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex bg-[#0b0f19] text-gray-100 antialiased overflow-x-hidden">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="w-64 min-w-[16rem] h-screen sticky top-0 bg-[#070b14] border-r border-gray-800/90 flex flex-col justify-between p-4 z-50 shrink-0 pointer-events-auto select-none">
+        <div class="space-y-6">
+            <!-- BRANDING -->
+            <div class="flex items-center gap-3 px-2 py-1">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-orange-600 to-red-600 flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0">
+                    <i data-lucide="shield-alert" class="w-6 h-6 text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-base font-extrabold tracking-tight text-white flex items-center gap-1.5">
+                        POLY-MAKER
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">V2 CORE</span>
+                    </h1>
+                    <p class="text-[11px] text-gray-400 font-medium">Institutional Market Maker</p>
+                </div>
+            </div>
+
+            <!-- NAVIGATION MENU -->
+            <div class="space-y-1.5">
+                <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-gray-500">Navigazione</p>
+                
+                <a href="/polymaker" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm">
+                    <i data-lucide="bot" class="w-4 h-4 text-amber-400"></i>
+                    <span>🦅 poly-maker Engine</span>
+                </a>
+
+                <a href="/" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="zap" class="w-4 h-4 text-cyan-400"></i>
+                    <span>⚡ Market Making Reale</span>
+                </a>
+
+                <a href="/logical" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="brain" class="w-4 h-4 text-purple-400"></i>
+                    <span>🧠 Spread Logico & APY</span>
+                </a>
+
+                <a href="/training" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="cpu" class="w-4 h-4 text-indigo-400"></i>
+                    <span>🤖 Addestramento AI</span>
+                </a>
+
+                <a href="/simulation" class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all cursor-pointer relative z-50 text-gray-400 hover:text-white hover:bg-gray-800/60 border-transparent">
+                    <i data-lucide="gamepad-2" class="w-4 h-4 text-emerald-400"></i>
+                    <span>🎮 Simulazione Live</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- SIDEBAR FOOTER: WALLET & STATUS -->
+        <div class="space-y-3 pt-4 border-t border-gray-800/80">
+            <div class="p-2.5 rounded-xl bg-gray-900/90 border border-gray-800 flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+                    <div class="flex flex-col">
+                        <span class="text-[9px] uppercase font-bold text-gray-400">Deposit Funder</span>
+                        <span class="text-[11px] font-bold mono text-amber-300">0x117d...1de8</span>
+                    </div>
+                </div>
+                <i data-lucide="wallet" class="w-4 h-4 text-gray-500"></i>
+            </div>
+
+            <!-- CONTROLS -->
+            <button onclick="runDoctor()" class="w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-gray-800 hover:bg-gray-700 text-gray-200 border border-gray-700 flex items-center justify-center gap-1.5 transition-all active:scale-95">
+                <i data-lucide="stethoscope" class="w-3.5 h-3.5 text-cyan-400"></i>
+                <span>Esegui Doctor Preflight</span>
+            </button>
+            <button onclick="emergencyCancelAll()" class="w-full py-2 px-2 rounded-lg font-bold text-[11px] bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/40 flex items-center justify-center gap-1.5 transition-all active:scale-95">
+                <i data-lucide="octagon-x" class="w-3.5 h-3.5 text-red-400"></i>
+                <span>Cancella Tutti gli Ordini</span>
+            </button>
+        </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="flex-1 flex flex-col min-w-0 p-6 lg:p-8 space-y-6">
+
+        <!-- HEADER BANNER -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl glass glow-amber">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                    <i data-lucide="activity" class="w-7 h-7"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-xl font-black text-white">Terminale di Controllo `poly-maker`</h2>
+                        <span id="engine-badge" class="px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                            LIVE RUNNING
+                        </span>
+                        <span class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                            Avellaneda-Stoikov Pure WS
+                        </span>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-1">Quotazione atomica bivalente, calcolo dinamico Fair Value e Skewing dell'inventario per Complete Set Merging.</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="px-3.5 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-right">
+                    <span class="text-[10px] uppercase font-bold text-gray-400 block">Capitale Netto</span>
+                    <span id="header-net-worth" class="text-base font-black mono text-emerald-400">20.37$ USDC</span>
+                </div>
+                <div class="px-3.5 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-right">
+                    <span class="text-[10px] uppercase font-bold text-gray-400 block">Rewards Oggi</span>
+                    <span id="header-rewards" class="text-base font-black mono text-amber-400">+1.00$ USDC</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4 MICROSTRUCTURE METRIC CARDS -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- FAIR VALUE -->
+            <div class="p-4 rounded-2xl glass space-y-2">
+                <div class="flex items-center justify-between text-gray-400">
+                    <span class="text-xs font-bold uppercase tracking-wider">Fair Value (FV)</span>
+                    <i data-lucide="scale" class="w-4 h-4 text-cyan-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="val-fv" class="text-2xl font-black mono text-cyan-300">0.545$</span>
+                    <span class="text-[11px] font-semibold text-gray-400">Microprice</span>
+                </div>
+                <p class="text-[10px] text-gray-500">Ponderato su profondità book + flusso trade EWMA.</p>
+            </div>
+
+            <!-- REGIME & TOXICITY -->
+            <div class="p-4 rounded-2xl glass space-y-2">
+                <div class="flex items-center justify-between text-gray-400">
+                    <span class="text-xs font-bold uppercase tracking-wider">Tossicità & Regime</span>
+                    <i data-lucide="shield" class="w-4 h-4 text-emerald-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="val-regime" class="text-2xl font-black mono text-emerald-400">QUIET</span>
+                    <span id="val-tox" class="text-[11px] font-semibold text-gray-400">(Tox: 0.0)</span>
+                </div>
+                <p class="text-[10px] text-gray-500">Spread protetto. Nessun sweep o spike avverso.</p>
+            </div>
+
+            <!-- INVENTORY SKEW (u) -->
+            <div class="p-4 rounded-2xl glass space-y-2">
+                <div class="flex items-center justify-between text-gray-400">
+                    <span class="text-xs font-bold uppercase tracking-wider">Inventario (u) & Skew</span>
+                    <i data-lucide="layers" class="w-4 h-4 text-purple-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="val-inventory" class="text-2xl font-black mono text-purple-300">0.0 (Neutro)</span>
+                </div>
+                <p class="text-[10px] text-gray-500">Bilanciamento perfetto YES/NO. Rischio direzionale = 0.</p>
+            </div>
+
+            <!-- EXIT URGENCY GUARD -->
+            <div class="p-4 rounded-2xl glass space-y-2">
+                <div class="flex items-center justify-between text-gray-400">
+                    <span class="text-xs font-bold uppercase tracking-wider">Exit Urgency Guard</span>
+                    <i data-lucide="timer" class="w-4 h-4 text-amber-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="val-urgency" class="text-2xl font-black mono text-amber-300">60s Timeout</span>
+                </div>
+                <p class="text-[10px] text-gray-500">Liquidazione istantanea sul Best Bid se hold > 60s.</p>
+            </div>
+        </div>
+
+        <!-- ACTIVE QUOTING SECTION -->
+        <div class="p-6 rounded-2xl glass space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="crosshair" class="w-5 h-5 text-amber-400"></i>
+                    <h3 class="text-base font-bold text-white">Mercato Attivo & Ordini Limite sul Book</h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400">Profilo:</span>
+                    <span class="px-2 py-0.5 text-xs font-bold rounded-lg bg-gray-800 text-amber-300 border border-gray-700">micro-rewards</span>
+                </div>
+            </div>
+
+            <div class="p-4 rounded-xl bg-gray-900/80 border border-gray-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div class="space-y-1">
+                    <span id="active-market-tag" class="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                        Top Scored Market (Rank #1)
+                    </span>
+                    <h4 id="active-market-title" class="text-base font-black text-gray-100">
+                        Will Donald Trump post 200+ Truth Social posts from September 4 to September 11, 2026?
+                    </h4>
+                    <p class="text-xs text-gray-400 flex items-center gap-3">
+                        <span>Montepremi: <b class="text-emerald-400 font-bold">$143.00/giorno</b></span>
+                        <span>•</span>
+                        <span>Soglia Minima: <b class="text-gray-200">20 quote</b></span>
+                        <span>•</span>
+                        <span>Max Spread: <b class="text-gray-200">4.5¢</b></span>
+                    </p>
+                </div>
+
+                <div class="flex items-center gap-3 shrink-0">
+                    <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center">
+                        <span class="text-[10px] uppercase font-bold text-emerald-400 block">BUY YES Target</span>
+                        <span id="bid-yes-price" class="text-lg font-black mono text-emerald-300">0.53$ (20q)</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-center">
+                        <span class="text-[10px] uppercase font-bold text-purple-400 block">BUY NO Target</span>
+                        <span id="bid-no-price" class="text-lg font-black mono text-purple-300">0.44$ (20q)</span>
+                    </div>
+                    <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-center">
+                        <span class="text-[10px] uppercase font-bold text-amber-400 block">Edge al Merge</span>
+                        <span id="edge-merge" class="text-lg font-black mono text-amber-300">+0.03$ (1.00$)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LIVE ORDERS TABLE -->
+            <div class="overflow-x-auto rounded-xl border border-gray-800">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-gray-900/90 text-gray-400 uppercase font-bold border-b border-gray-800">
+                        <tr>
+                            <th class="p-3">Tipo</th>
+                            <th class="p-3">Esito</th>
+                            <th class="p-3">Quantità</th>
+                            <th class="p-3">Prezzo Limite</th>
+                            <th class="p-3">Valore Ordine</th>
+                            <th class="p-3">Post-Only</th>
+                            <th class="p-3">Stato Scoring</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-table-body" class="divide-y divide-gray-800 text-gray-200">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- TOP SCORED REWARD MARKETS CATALOG -->
+        <div class="p-6 rounded-2xl glass space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="database" class="w-5 h-5 text-cyan-400"></i>
+                    <h3 class="text-base font-bold text-white">Catalogo Mercati Scansionati (Accessibili con nostro Saldo)</h3>
+                </div>
+                <button onclick="refreshCatalog()" class="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-xs font-bold text-gray-300 border border-gray-700 flex items-center gap-1.5">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    <span>Aggiorna Catalogo</span>
+                </button>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-800">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-gray-900/90 text-gray-400 uppercase font-bold border-b border-gray-800">
+                        <tr>
+                            <th class="p-3">Score</th>
+                            <th class="p-3">Mercato</th>
+                            <th class="p-3">Montepremi</th>
+                            <th class="p-3">Min Size</th>
+                            <th class="p-3">Max Spread</th>
+                            <th class="p-3">Azione</th>
+                        </tr>
+                    </thead>
+                    <tbody id="catalog-table-body" class="divide-y divide-gray-800 text-gray-200">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- JS SCRIPTS -->
+    <script>
+        lucide.createIcons();
+
+        async function updateDashboard() {
+            try {
+                const res = await fetch('/api/polymaker/status');
+                if (!res.ok) return;
+                const data = await res.json();
+
+                // Aggiorna header
+                if (data.net_worth !== undefined) {
+                    document.getElementById('header-net-worth').innerText = `${data.net_worth.toFixed(2)}$ USDC`;
+                }
+                if (data.fv !== undefined) {
+                    document.getElementById('val-fv').innerText = `${data.fv.toFixed(3)}$`;
+                }
+                if (data.regime) {
+                    document.getElementById('val-regime').innerText = data.regime;
+                }
+                if (data.toxicity !== undefined) {
+                    document.getElementById('val-tox').innerText = `(Tox: ${data.toxicity.toFixed(2)})`;
+                }
+                if (data.inventory !== undefined) {
+                    document.getElementById('val-inventory').innerText = `${data.inventory.toFixed(1)} (${data.inventory === 0 ? 'Neutro' : (data.inventory > 0 ? 'Long YES' : 'Long NO')})`;
+                }
+
+                // Aggiorna mercato attivo
+                if (data.active_market) {
+                    document.getElementById('active-market-title').innerText = data.active_market.title || 'Mercato Attivo';
+                }
+
+                // Aggiorna tabella ordini
+                const tbody = document.getElementById('orders-table-body');
+                if (data.open_orders && data.open_orders.length > 0) {
+                    tbody.innerHTML = data.open_orders.map(o => `
+                        <tr class="hover:bg-gray-800/40">
+                            <td class="p-3"><span class="px-2 py-0.5 rounded font-bold ${o.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">${o.side}</span></td>
+                            <td class="p-3 font-bold">${o.outcome || 'N/D'}</td>
+                            <td class="p-3 mono">${o.size || o.original_size} quote</td>
+                            <td class="p-3 mono font-black text-amber-300">${o.price}$</td>
+                            <td class="p-3 mono">${((o.price || 0) * (o.size || o.original_size || 0)).toFixed(2)}$</td>
+                            <td class="p-3"><span class="text-emerald-400 font-bold">✓ MAKER</span></td>
+                            <td class="p-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${o.scoring ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-amber-500/20 text-amber-400'}">${o.scoring ? '🟢 SCORING ATTIVO' : '🟡 QUALIFICATO (SNAPSHOT)'}</span></td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-gray-500">Nessun ordine aperto o sincronizzazione in corso...</td></tr>`;
+                }
+
+            } catch (err) {
+                console.error("Errore aggiornamento poly-maker:", err);
+            }
+        }
+
+        async function refreshCatalog() {
+            try {
+                const res = await fetch('/api/polymaker/markets');
+                if (!res.ok) return;
+                const data = await res.json();
+                const tbody = document.getElementById('catalog-table-body');
+                if (data.markets && data.markets.length > 0) {
+                    tbody.innerHTML = data.markets.map(m => `
+                        <tr class="hover:bg-gray-800/40">
+                            <td class="p-3 mono font-bold text-amber-400">${m.score.toFixed(2)}</td>
+                            <td class="p-3 font-medium text-gray-200">${m.question}</td>
+                            <td class="p-3 mono font-black text-emerald-400">$${m.daily_rate}/gg</td>
+                            <td class="p-3 mono text-gray-300">${m.min_size} quote</td>
+                            <td class="p-3 mono text-gray-300">${m.spread}¢</td>
+                            <td class="p-3">
+                                ${m.is_active ? 
+                                    '<span class="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-bold border border-emerald-500/30">Attivo</span>' : 
+                                    `<button onclick="setActiveMarket('${m.slug}')" class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold border border-amber-500/30 transition-all">Attiva</button>`
+                                }
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function setActiveMarket(slug) {
+            if (!confirm(`Vuoi passare la quotazione di poly-maker sul mercato selezionato?`)) return;
+            try {
+                const res = await fetch('/api/polymaker/set_market', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ slug: slug, profile: 'micro-rewards' })
+                });
+                const r = await res.json();
+                alert(r.message || "Mercato impostato!");
+                updateDashboard();
+                refreshCatalog();
+            } catch (e) {
+                alert("Errore cambio mercato: " + e);
+            }
+        }
+
+        async function runDoctor() {
+            alert("Esecuzione Preflight Doctor avviata in background...");
+            const res = await fetch('/api/polymaker/doctor');
+            const data = await res.json();
+            alert("Esito Doctor:\n" + JSON.stringify(data, null, 2));
+        }
+
+        async function emergencyCancelAll() {
+            if (!confirm("Sei sicuro di voler cancellare TUTTI gli ordini aperti?")) return;
+            const res = await fetch('/api/polymaker/cancel_all', { method: 'POST' });
+            const data = await res.json();
+            alert("Risultato: " + (data.message || "Ordini cancellati"));
+            updateDashboard();
+        }
+
+        setInterval(updateDashboard, 2000);
+        updateDashboard();
+        refreshCatalog();
+    </script>
+</body>
+</html>
