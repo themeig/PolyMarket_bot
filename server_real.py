@@ -87,7 +87,8 @@ class CompletePolymarketQuantBot:
         self.enable_wide = True
         self.enable_as_mm = True          # Motore Avellaneda-Stoikov Dual-Bidding
         self.enable_auto_merge = True     # Complete Set Merging on-chain
-        self.as_gamma = 0.15              # Risk Aversion
+        bp = trainer.best_params
+        self.as_gamma = bp.get("gamma", 0.338)              # Risk Aversion Ottimizzato da AI
         self.exclude_sports = True        # Filtro Sport attivo di default
         self.max_total_open_orders = 4
         self.max_order_spend = 1.60
@@ -96,9 +97,9 @@ class CompletePolymarketQuantBot:
 
         self.as_engine = AvellanedaStoikovEngine(
             gamma=self.as_gamma,
-            delta_min_ticks=2,
-            c_vol=1.5,
-            q_max_usdc=12.0,
+            delta_min_ticks=bp.get("delta_min_ticks", 2),
+            c_vol=bp.get("c_vol", 1.80),
+            q_max_usdc=bp.get("q_max_usdc", 12.0),
             base_size_usdc=self.max_order_spend
         )
         self.token_merger = TokenMerger(
