@@ -1,5 +1,10 @@
 # Polymarket Quant Bot Operational & Microstructure Rules
 
+## 0. Absolute Wallet & Custody Protection Invariant
+- **ZERO UNAUTHORIZED ON-CHAIN TRANSACTIONS:** Never initiate, sign, or broadcast ANY on-chain transaction, token swap (Uniswap, QuickSwap, etc.), token approval, or fund transfer from the user's personal MetaMask / EOA wallet. 
+- The bot's automated operations are strictly confined to the Polymarket CLOB layer (off-chain order matching via API) using existing available collateral.
+- Any on-chain transaction or fund movement must be initiated solely by the user or require explicit, unambiguous user confirmation beforehand.
+
 ## 1. Wallet & Contract Architecture
 - **Custody Verification:** When interacting on-chain, always verify if the account is an EOA or a Polymarket Deposit Wallet (Proxy). For Deposit Wallets, ERC-1155 tokens and collateral are held on the proxy address (`proxy_wallet`), requiring Relayer EIP-712 batching rather than direct EOA transactions.
 - **Contract Routing:** Check `negRisk` metadata on every market:
