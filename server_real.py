@@ -294,7 +294,8 @@ class CompletePolymarketQuantBot:
                         for pos in positions:
                             size = float(pos.get("size", 0) or 0)
                             cur_val = float(pos.get("currentValue", 0) or 0)
-                            if size < 0.5 or cur_val <= 0.001:
+                            cur_p = float(pos.get("curPrice", 0) or 0)
+                            if size < 1.0 or cur_val < 0.50 or cur_p < 0.03:
                                 continue
                             avg_p = float(pos.get("avgPrice", 0) or 0)
                             cur_p = float(pos.get("curPrice", 0) or 0)
