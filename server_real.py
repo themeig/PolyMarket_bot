@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from web3 import Web3
 
 from py_clob_client_v2.client import ClobClient
-from py_clob_client_v2.clob_types import OrderArgs, OrderType, BalanceAllowanceParams, AssetType
+from py_clob_client_v2.clob_types import OrderArgs, OrderArgsV2, OrderType, BalanceAllowanceParams, AssetType
 from py_clob_client_v2.order_builder.constants import BUY, SELL
 from step2_smart_screener import get_all_active_markets, filter_dual_engine_markets, format_iso_time_ago, is_sports_market
 from step3_logical_screener import fetch_all_logical_opportunities
