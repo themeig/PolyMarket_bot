@@ -350,7 +350,7 @@ class CompletePolymarketQuantBot:
                                 # Cancella eventuale vecchio ordine di vendita disallineato
                                 if existing_sell and existing_sell.get("order_id"):
                                     try:
-                                        self.client.cancel(existing_sell["order_id"])
+                                        self.client.cancel_orders([existing_sell["order_id"]])
                                     except Exception:
                                         pass
 
@@ -504,10 +504,16 @@ class CompletePolymarketQuantBot:
                             # GARANZIA ATOMICA: Se uno dei due fallisce, cancella subito l'altro (Zero Ordini Orfani!)
                             if yes_id and not no_id:
                                 print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito. Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani a un solo lato!")
-                                self.client.cancel(yes_id)
+                                try:
+                                    self.client.cancel_orders([yes_id])
+                                except Exception:
+                                    pass
                             elif no_id and not yes_id:
                                 print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito. Cancello subito NO ({no_id[:10]}...)!")
-                                self.client.cancel(no_id)
+                                try:
+                                    self.client.cancel_orders([no_id])
+                                except Exception:
+                                    pass
                             elif yes_id and no_id:
                                 print(f"[+] ✅ COPPIA ATOMICA DUAL-BIDDING CONFERMATA AL 100% SUL BOOK (Qualificata per Merge + Rewards)!")
                                 busy_tokens.add(token_id_yes)
@@ -522,9 +528,10 @@ class CompletePolymarketQuantBot:
     async def reconcile_active_rewards_orders(self, open_orders, reward_candidates, now_str):
         """
         Poly-Maker Order Reconciler:
-        Controlla se gli ordini BUY attivi sono ancora dentro lo spread target ufficiale delle Rewards.
-        Se il mercato oscilla e l'ordine finisce fuori banda (> rewards_max_spread o > 2 ticks dal target),
-        cancella la vecchia coppia e la riposiziona al prezzo ottimale per massimizzare il punteggio S((v-s)/v)^2.
+        Controlla in tempo reale se gli ordini BUY attivi sono ancora dentro lo spread target ufficiale delle Rewards.
+        Interroga direttamente il book live di ciascun token per calcolare il vero Midpoint.
+        Se l'ordine finisce fuori banda (> rewards_max_spread o > 2 ticks dal target),
+        cancella la vecchia coppia e permette al ciclo successivo di riposizionarla dentro lo spread ottimale.
         """
         if not open_orders:
             return
@@ -550,44 +557,56 @@ class CompletePolymarketQuantBot:
                 if r_max_spread_c <= 0:
                     continue
 
-                m_id = str(cand.get("id", token_yes))
-                yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
-                yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
-                
-                as_res = self.as_engine.compute_quotes(
-                    market_id=m_id,
-                    yes_best_bid=yes_bid_live,
-                    yes_best_ask=yes_ask_live,
-                    no_best_bid=round(1.0 - yes_ask_live, 3) if yes_ask_live else None,
-                    no_best_ask=round(1.0 - yes_bid_live, 3) if yes_bid_live else None
-                )
                 max_half_spread = (r_max_spread_c / 100.0) / 2.0
-                ideal_yes = round(as_res.reservation_price - max_half_spread, 3)
-                ideal_no = round((1.0 - as_res.reservation_price) - max_half_spread, 3)
+
+                # Calcolo del Midpoint Live direttamente dal book di ciascun token
+                ideal_yes = None
+                ideal_no = None
+                try:
+                    if order_yes:
+                        book_y = self.client.get_order_book(token_yes)
+                        bids_y = book_y.get("bids", []) if isinstance(book_y, dict) else getattr(book_y, "bids", [])
+                        asks_y = book_y.get("asks", []) if isinstance(book_y, dict) else getattr(book_y, "asks", [])
+                        by = float(bids_y[0].get("price") if isinstance(bids_y[0], dict) else bids_y[0].price) if bids_y else 0.001
+                        ay = float(asks_y[0].get("price") if isinstance(asks_y[0], dict) else asks_y[0].price) if asks_y else 0.999
+                        mid_y = (by + ay) / 2.0
+                        ideal_yes = max(0.001, min(0.999, round(mid_y - max_half_spread, 3)))
+                    
+                    if order_no:
+                        book_n = self.client.get_order_book(token_no)
+                        bids_n = book_n.get("bids", []) if isinstance(book_n, dict) else getattr(book_n, "bids", [])
+                        asks_n = book_n.get("asks", []) if isinstance(book_n, dict) else getattr(book_n, "asks", [])
+                        bn = float(bids_n[0].get("price") if isinstance(bids_n[0], dict) else bids_n[0].price) if bids_n else 0.001
+                        an = float(asks_n[0].get("price") if isinstance(asks_n[0], dict) else asks_n[0].price) if asks_n else 0.999
+                        mid_n = (bn + an) / 2.0
+                        ideal_no = max(0.001, min(0.999, round(mid_n - max_half_spread, 3)))
+                except Exception:
+                    pass
 
                 # Verifica tolleranza (reprice_ticks = 2 ticks = 0.004$)
                 reprice_needed = False
-                if order_yes:
+                if order_yes and ideal_yes:
                     cur_p = float(order_yes.get("price", 0))
                     if abs(cur_p - ideal_yes) > 0.004:
                         reprice_needed = True
-                if order_no:
+                if order_no and ideal_no:
                     cur_p = float(order_no.get("price", 0))
                     if abs(cur_p - ideal_no) > 0.004:
                         reprice_needed = True
 
                 if reprice_needed:
-                    print(f"[{now_str}] 🔄 RECONCILER DINAMICO: Ordini su '{cand.get('Mercato', '')[:20]}' fuori spread ottimale! Riconciliazione in corso...")
+                    print(f"[{now_str}] 🔄 RECONCILER DINAMICO: Ordini su '{cand.get('Mercato', '')[:20]}' fuori dallo spread live del book! Cancellazione per riallineamento...")
+                    to_cancel = []
                     if order_yes:
-                        try:
-                            self.client.cancel(order_yes.get("id") or order_yes.get("orderID"))
-                        except Exception:
-                            pass
+                        to_cancel.append(order_yes.get("id") or order_yes.get("orderID"))
                     if order_no:
+                        to_cancel.append(order_no.get("id") or order_no.get("orderID"))
+                    if to_cancel:
                         try:
-                            self.client.cancel(order_no.get("id") or order_no.get("orderID"))
-                        except Exception:
-                            pass
+                            self.client.cancel_orders(to_cancel)
+                            print(f"[+] ✅ RICONCILIAZIONE: {len(to_cancel)} vecchi ordini fuori-spread cancellati con successo.")
+                        except Exception as ce:
+                            print(f"[!] Errore cancellazione riconciliazione: {ce}")
 
     # Nota: Le uscite sono gestite al 100% come Maker Exits passivi in _maybe_exit (Zero market dumps)
 
