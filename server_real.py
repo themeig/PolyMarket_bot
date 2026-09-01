@@ -70,7 +70,7 @@ class CompletePolymarketQuantBot:
             host="https://clob.polymarket.com", 
             key=self.private_key, 
             chain_id=137,
-            signature_type=2,
+            signature_type=3,
             funder=self.proxy_wallet
         )
         self.api_creds = self.client.create_or_derive_api_key()
