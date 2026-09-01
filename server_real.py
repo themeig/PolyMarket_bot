@@ -269,7 +269,9 @@ class CompletePolymarketQuantBot:
                 except Exception:
                     pass
 
-                # Gestione Copertura Inventario (Esclusivamente Limit SELL passivo a profitto per liberare USDC)
+                # Gestione Copertura Inventario & Completamento Coppia per Merge a 1.00$
+                held_opp_tokens = set()
+                self.held_opp_tokens = held_opp_tokens
                 for pos in positions:
                     size = float(pos.get("size", 0) or 0)
                     cur_val = float(pos.get("currentValue", 0) or 0)
@@ -277,20 +279,27 @@ class CompletePolymarketQuantBot:
                         continue
                     
                     asset_id = str(pos.get("asset"))
+                    opp_asset = pos.get("oppositeAsset")
+                    opp_outcome = pos.get("oppositeOutcome", "YES")
                     avg_p = float(pos.get("avgPrice", 0) or 0)
                     title = pos.get("title", "")
                     
-                    # Se abbiamo quote in portafoglio, piazziamo Limit SELL passivo a profitto (+5%) per monetizzare
-                    if asset_id not in open_sell_assets:
-                        sell_target_p = round(min(0.99, max(0.01, avg_p * 1.05)), 2)
-                        print(f"[{now_str}] 📌 COPERTURA PASSIVA A PROFITTO: SELL {size:.0f} quote {pos.get('outcome')} '{title[:20]}' @ {sell_target_p:.2f}$ (Carico: {avg_p:.3f}$)...")
-                        try:
-                            s_args = OrderArgsV2(token_id=asset_id, price=sell_target_p, size=size, side="SELL")
-                            s_res = self.client.post_order(self.client.create_order(s_args), OrderType.GTC)
-                            if s_res.get("success") or s_res.get("orderID"):
-                                open_sell_assets.add(asset_id)
-                        except Exception:
-                            pass
+                    if opp_asset:
+                        held_opp_tokens.add(str(opp_asset))
+                        # Se il lato opposto NON ha ancora un ordine BUY attivo, piazzalo per completare la coppia da fondere a 1.00$
+                        if str(opp_asset) not in open_buy_assets:
+                            target_opp_p = round(min(0.99, max(0.01, 1.00 - avg_p - 0.02)), 2)
+                            needed_cost = round(size * target_opp_p, 2)
+                            avail_c = self.get_clob_collateral()
+                            if avail_c >= needed_cost:
+                                print(f"[{now_str}] 🧩 COMPLETAMENTO COPPIA PER MERGE: BUY {size:.0f} quote {opp_outcome} @ {target_opp_p:.2f}$ (Spesa: {needed_cost:.2f}$ | Merge Target: 1.00$)...")
+                                try:
+                                    opp_args = OrderArgsV2(token_id=str(opp_asset), price=target_opp_p, size=size, side="BUY")
+                                    opp_res = self.client.post_order(self.client.create_order(opp_args), OrderType.GTC)
+                                    if opp_res.get("success") or opp_res.get("orderID"):
+                                        open_buy_assets.add(str(opp_asset))
+                                except Exception:
+                                    pass
             except Exception:
                 pass
 
@@ -312,19 +321,22 @@ class CompletePolymarketQuantBot:
         avail_collateral = self.get_clob_collateral()
         busy_tokens = open_buy_assets.union(open_sell_assets)
 
-        # Controllo di Parità: Se c'è solo 1 ordine BUY orfano, cancellalo subito per ripristinare la coppia pura
+        # Controllo di Parità Intelligente:
+        # Se c'è 1 ordine BUY aperto, cancellalo SOLO se è un vero orfano non legato a nessuna posizione detenuta
         buy_orders_list = [o for o in open_orders if o.get("side") == "BUY"]
         if len(buy_orders_list) == 1:
-            orphan_id = buy_orders_list[0].get("id") or buy_orders_list[0].get("orderID")
-            print(f"[{now_str}] ⚠️ RILEVATO ORDINE SINGOLO ORFANO ({orphan_id[:10]}...). Cancellazione per ripristinare la coppia pura a due lati!")
-            try:
-                self.client.cancel_orders([orphan_id])
-                open_buy_assets.clear()
-            except Exception:
-                pass
+            b_aid = str(buy_orders_list[0].get("asset_id"))
+            if b_aid not in getattr(self, "held_opp_tokens", set()):
+                orphan_id = buy_orders_list[0].get("id") or buy_orders_list[0].get("orderID")
+                print(f"[{now_str}] ⚠️ RILEVATO VERO ORDINE ORFANO ({orphan_id[:10]}...). Cancellazione per ripristinare la coppia pura a due lati!")
+                try:
+                    self.client.cancel_orders([orphan_id])
+                    open_buy_assets.clear()
+                except Exception:
+                    pass
 
-        # Se abbiamo già la coppia bivalente completa attiva (2 ordini BUY), attendiamo senza disperdere collaterale
-        if len(open_buy_assets) >= 2:
+        # Se abbiamo ordini BUY attivi sul book (coppia o ordine di completamento merge), attendiamo
+        if len(open_buy_assets) >= 2 or (len(open_buy_assets) >= 1 and len(getattr(self, "held_opp_tokens", set())) > 0):
             return
 
         # Circuit Breaker Globale: Net Worth Reale (Collaterale Libero + Impegnato in Ordini + Valore Posizioni)
