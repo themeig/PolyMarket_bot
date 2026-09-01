@@ -327,8 +327,9 @@ class CompletePolymarketQuantBot:
         if len(open_buy_assets) >= 2:
             return
 
-        # Circuit Breaker Globale: Net Worth Reale (Collaterale + Posizioni)
-        current_equity = avail_collateral + getattr(self, "cached_positions_val", 0.0)
+        # Circuit Breaker Globale: Net Worth Reale (Collaterale Libero + Impegnato in Ordini + Valore Posizioni)
+        open_orders_val = sum(float(o.get("price", 0) or 0) * float(o.get("original_size", 0) or 0) for o in open_orders if o.get("side") == "BUY")
+        current_equity = avail_collateral + open_orders_val + getattr(self, "cached_positions_val", 0.0)
         if getattr(self, "day_start_equity", None) is None or self.day_start_equity <= 0:
             if current_equity > 0:
                 self.day_start_equity = current_equity
