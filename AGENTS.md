@@ -23,3 +23,12 @@
 - **Proxy Balance Allowance Invariant:** When querying CLOB collateral balances, always pass `signature_type=2` in `BalanceAllowanceParams` to prevent silent exceptions on Polymarket proxy wallets.
 - **Atomic Paired Quoting:** Dual-bidding maker orders (`BUY YES` + `BUY NO`) must be posted with atomic rollback: if one leg fails or is rejected, the sibling leg must be cancelled immediately to prevent orphaned one-sided inventory.
 
+## 5. Market Making Exit & Risk Invariants (Poly-Maker Standard)
+- **Zero Taker Market-Dump Invariant:** Never execute taker market orders or naive percentage-based stop-loss dumps on illiquid prediction market books. Crossing the spread destroys maker edge.
+- **Merge-First Priority Invariant:** The dominant, zero-risk exit mechanism is Complete Set Merging ($1.0\text{ YES} + 1.0\text{ NO} = 1.000\$$ USDC). Prioritize pairing and merging before attempting inventory sales.
+- **Dynamic Maker Exit with Urgency Walk-Down (`_maybe_exit`):** Unpaired inventory must be managed via passive SELL limit orders:
+  - Interpolate target between passive profit ($FV + \delta$) and floor (`best_bid + 0.001$`) based on hold duration urgency $u \in [0, 1]$.
+  - **Inviolable constraint:** `target = max(target, best_bid + 0.001$)` (Never cross down through the bid).
+- **Daily Loss Circuit Breaker (`daily_loss_kill_usdc`):** If cumulative realized daily loss breaches the threshold, transition the bot to `HALTED` / `REDUCE_ONLY`—halt all new BUY bids immediately and maintain only passive maker exits and on-chain merges.
+
+
