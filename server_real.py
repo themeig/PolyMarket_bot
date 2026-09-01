@@ -269,9 +269,12 @@ class CompletePolymarketQuantBot:
                 except Exception:
                     pass
 
-                # Gestione Copertura Inventario & Completamento Coppia per Merge a 1.00$
+                # =========================================================================
+                # 1. GESTIONE INVENTARIO & EXIT URGENCY (POLY-MAKER STYLE)
+                # =========================================================================
                 held_opp_tokens = set()
                 self.held_opp_tokens = held_opp_tokens
+
                 for pos in positions:
                     size = float(pos.get("size", 0) or 0)
                     cur_val = float(pos.get("currentValue", 0) or 0)
@@ -282,11 +285,47 @@ class CompletePolymarketQuantBot:
                     opp_asset = pos.get("oppositeAsset")
                     opp_outcome = pos.get("oppositeOutcome", "YES")
                     avg_p = float(pos.get("avgPrice", 0) or 0)
+                    cur_p = float(pos.get("curPrice", 0) or avg_p)
                     title = pos.get("title", "")
                     
+                    if asset_id not in self.position_acquired_ts:
+                        self.position_acquired_ts[asset_id] = time.time()
+                    
+                    hold_duration = time.time() - self.position_acquired_ts[asset_id]
+                    adverse_drift = avg_p - cur_p  # Fluttuazione sfavorevole del prezzo
+
+                    # REGOLA 1: EXIT URGENCY (Se hold > 60s O drift sfavorevole >= 2c, liquida subito al Best Bid per proteggere il capitale)
+                    if hold_duration >= 60.0 or adverse_drift >= 0.02:
+                        best_bid_exit = 0.01
+                        try:
+                            b_exit = self.client.get_order_book(asset_id)
+                            bids_list = b_exit.get("bids", []) if isinstance(b_exit, dict) else getattr(b_exit, "bids", [])
+                            if bids_list:
+                                best_bid_exit = max(float(b.get("price") if isinstance(b, dict) else b.price) for b in bids_list)
+                        except Exception:
+                            pass
+                        
+                        exit_p = max(0.01, min(0.99, round(best_bid_exit, 2)))
+                        print(f"[{now_str}] 🛑 EXIT URGENCY (Poly-Maker Guard): Posizione {size:.0f} quote {pos.get('outcome')} '{title[:20]}' tenuta per {hold_duration:.0f}s (Drift: -{adverse_drift*100:.1f}c). Liquidazione immediata al Best Bid @ {exit_p:.2f}$!")
+                        try:
+                            # Cancella eventuale ordine BUY opposto
+                            if opp_asset and str(opp_asset) in open_buy_assets:
+                                o_to_cancel = [o.get("id") or o.get("orderID") for o in open_orders if str(o.get("asset_id")) == str(opp_asset)]
+                                if o_to_cancel:
+                                    self.client.cancel_orders(o_to_cancel)
+                                    open_buy_assets.discard(str(opp_asset))
+                            
+                            # Esegui Sell immediato
+                            s_args = OrderArgsV2(token_id=asset_id, price=exit_p, size=size, side="SELL")
+                            self.client.post_order(self.client.create_order(s_args), OrderType.GTC)
+                            self.position_acquired_ts.pop(asset_id, None)
+                            continue
+                        except Exception as e_err:
+                            print(f"[{now_str}] Errore Exit Urgency: {e_err}")
+
+                    # REGOLA 2: INVENTORY SKEWING (Entro i 60s, alza il bid opposto al Best Bid per chiudere la coppia e fare Merge a 1.00$)
                     if opp_asset:
                         held_opp_tokens.add(str(opp_asset))
-                        # Se il lato opposto NON ha ancora un ordine BUY attivo, piazzalo per completare la coppia da fondere a 1.00$
                         if str(opp_asset) not in open_buy_assets:
                             opp_bid = 0.45
                             opp_ask = 0.55
@@ -302,13 +341,12 @@ class CompletePolymarketQuantBot:
                             except Exception:
                                 pass
                             
-                            mid_opp = (opp_bid + opp_ask) / 2.0 if (opp_bid > 0.01 and opp_ask < 0.99) else (1.0 - avg_p)
-                            half_sp_dyn = (max_sp_c / 100.0) / 2.0
-                            target_opp_p = max(0.01, min(0.99, round(min(1.00 - avg_p - 0.01, mid_opp - half_sp_dyn), 2)))
+                            # Piazza il bid di completamento al touch per massimizzare la probabilita di fill rapido
+                            target_opp_p = max(0.01, min(0.99, round(opp_bid, 2)))
                             needed_cost = round(size * target_opp_p, 2)
                             avail_c = self.get_clob_collateral()
                             if avail_c >= needed_cost:
-                                print(f"[{now_str}] 🧩 COMPLETAMENTO COPPIA PER MERGE: BUY {size:.0f} quote {opp_outcome} @ {target_opp_p:.2f}$ (Mid Dinamico: {mid_opp:.2f}$ | Spesa: {needed_cost:.2f}$ | Merge Target: 1.00$)...")
+                                print(f"[{now_str}] 🧩 SKEWING PAIR MERGE: BUY {size:.0f} quote {opp_outcome} @ {target_opp_p:.2f}$ (Touch Bid: {opp_bid:.2f}$ | Spesa: {needed_cost:.2f}$ | Merge Target: 1.00$)...")
                                 try:
                                     opp_args = OrderArgsV2(token_id=str(opp_asset), price=target_opp_p, size=size, side="BUY")
                                     opp_res = self.client.post_order(self.client.create_order(opp_args), OrderType.GTC)
