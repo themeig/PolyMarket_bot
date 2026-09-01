@@ -140,16 +140,16 @@ class CompletePolymarketQuantBot:
 
     def get_clob_collateral(self):
         now = time.time()
-        if hasattr(self, "_cached_cash") and (now - getattr(self, "_cached_cash_ts", 0)) < 8.0:
+        if hasattr(self, "_cached_cash") and (now - getattr(self, "_cached_cash_ts", 0)) < 4.0:
             return self._cached_cash
         try:
-            p = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            p = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
             bal = self.client.get_balance_allowance(p)
             self._cached_cash = float(bal.get("balance", 0) or 0) / 1e6
             self._cached_cash_ts = now
             return self._cached_cash
         except Exception:
-            return getattr(self, "_cached_cash", 1.83)
+            return getattr(self, "_cached_cash", 0.0)
 
     async def trading_loop(self):
         print(f"[+] Motore Ibrido (Market Making & Spread Logico) avviato...")
