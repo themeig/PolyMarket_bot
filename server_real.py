@@ -95,8 +95,8 @@ class CompletePolymarketQuantBot:
         self.take_profit_pct = 15.0
         self.stop_loss_pct = -18.0
         self.position_acquired_ts = {}       # asset_id -> timestamp primo acquisto
-        self.day_start_equity = 12.55         # baseline per il circuit breaker giornaliero
-        self.daily_loss_kill_usdc = 5.00      # Limite massimo perdita giornaliera prima di HALT
+        self.day_start_equity = 12.36         # baseline per il circuit breaker giornaliero
+        self.daily_loss_kill_usdc = 3.00      # Limite massimo perdita giornaliera prima di HALT
         self.market_regime = "NORMAL"         # NORMAL, REDUCE_ONLY, HALTED
         self.active_sell_orders = {}          # asset_id -> {"order_id": str, "price": float}
 
@@ -116,7 +116,7 @@ class CompletePolymarketQuantBot:
         self.mergeable_pairs = []
         self.last_heartbeat_time = 0
 
-        self.killswitch_loss_limit = 5.00
+        self.killswitch_loss_limit = 3.00
 
         self.running = True
         self.killswitch_triggered = False
@@ -145,16 +145,19 @@ class CompletePolymarketQuantBot:
 
     def get_clob_collateral(self):
         now = time.time()
-        if hasattr(self, "_cached_cash") and (now - getattr(self, "_cached_cash_ts", 0)) < 4.0:
+        if hasattr(self, "_cached_cash") and (now - getattr(self, "_cached_cash_ts", 0)) < 3.0:
             return self._cached_cash
         try:
-            p = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL, signature_type=2)
-            bal = self.client.get_balance_allowance(p)
-            self._cached_cash = float(bal.get("balance", 0) or 0) / 1e6
+            usdc_c = self.w3.eth.contract(
+                address=Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
+                abi=[{"name": "balanceOf", "inputs": [{"name": "account", "type": "address"}], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}]
+            )
+            onchain_bal = usdc_c.functions.balanceOf(Web3.to_checksum_address(self.proxy_wallet)).call() / 1e6
+            self._cached_cash = float(onchain_bal)
             self._cached_cash_ts = now
             return self._cached_cash
         except Exception:
-            return getattr(self, "_cached_cash", 0.0)
+            return getattr(self, "_cached_cash", 12.36)
 
     async def trading_loop(self):
         print(f"[+] Motore Ibrido (Market Making & Spread Logico) avviato...")
