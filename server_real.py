@@ -331,15 +331,27 @@ class CompletePolymarketQuantBot:
                 pass
 
         # =========================================================================
-        # 3. PIAZZAMENTO NUOVI ORDINI DI ACQUISTO (DUAL-ALPHA REWARDS + AVELLANEDA-STOIKOV)
+        # 3. PIAZZAMENTO NUOVI ORDINI DI ACQUISTO (STRICT REWARDS-ONLY & MIN-SIZE)
         # =========================================================================
         avail_collateral = self.get_clob_collateral()
         busy_tokens = open_buy_assets.union(open_sell_assets)
 
-        # Motore Avellaneda-Stoikov Dual-Bidding con Priorità Rewards
-        if self.enable_as_mm and avail_collateral >= 2.0 and len(open_orders) < self.max_total_open_orders:
-            candidates = (self.rewards_screener + self.hft_screener + self.wide_screener)[:8]
-            for cand in candidates:
+        # Motore Strict Rewards-Only: Quota SOLO mercati con Rewards e SEMPRE >= min_size
+        if self.enable_as_mm and avail_collateral >= 3.0 and len(open_orders) < self.max_total_open_orders:
+            # 1. Filtra rigorosamente solo mercati con Rewards attive e min_size definita
+            reward_candidates = [
+                c for c in self.rewards_screener 
+                if float(c.get("rewards_min_size", 0) or 0) > 0 and float(c.get("rewards_daily", 0) or 0) > 0
+            ]
+
+            # Ordina per convenienza: privilegia mercati con min_size accessibile rispetto al collaterale disponibile
+            reward_candidates = sorted(
+                reward_candidates, 
+                key=lambda x: (float(x.get("rewards_min_size", 999)) <= 50, float(x.get("rewards_daily", 0))), 
+                reverse=True
+            )
+
+            for cand in reward_candidates:
                 token_id_yes = str(cand.get("token_id", ""))
                 tokens_raw = cand.get("clob_token_ids", [])
                 if isinstance(tokens_raw, list) and len(tokens_raw) >= 2:
@@ -355,7 +367,7 @@ class CompletePolymarketQuantBot:
                 yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
                 yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
                 r_min_size = float(cand.get("rewards_min_size", 0) or 0)
-                r_max_spread = float(cand.get("rewards_max_spread", 0) or 0)
+                r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
                 r_daily = float(cand.get("rewards_daily", 0) or 0)
 
                 # Calcolo Avellaneda-Stoikov
@@ -366,6 +378,15 @@ class CompletePolymarketQuantBot:
                     no_best_bid=round(1.0 - yes_ask_live, 3) if yes_ask_live else None,
                     no_best_ask=round(1.0 - yes_bid_live, 3) if yes_bid_live else None
                 )
+
+                # Clamping dello spread dentro la banda ufficiale delle Rewards
+                if r_max_spread_c > 0:
+                    max_half_spread = (r_max_spread_c / 100.0) / 2.0
+                    if as_res.half_spread > max_half_spread:
+                        as_res.half_spread = max_half_spread
+                        as_res.yes_bid_price = round(as_res.reservation_price - max_half_spread, 3)
+                        as_res.no_bid_price = round((1.0 - as_res.reservation_price) - max_half_spread, 3)
+
                 self.last_as_quotes[m_id] = {
                     "market": cand.get("Mercato", ""),
                     "fair_value": as_res.fair_value,
@@ -379,38 +400,33 @@ class CompletePolymarketQuantBot:
                     "rewards_min_size": r_min_size
                 }
 
-                if as_res.yes_bid_price and as_res.no_bid_price and as_res.expected_edge >= 0.002:
-                    # Se il mercato ha Rewards, adatta la size per soddisfare la soglia minima
-                    if r_min_size > 0 and (r_min_size * (as_res.yes_bid_price + as_res.no_bid_price)) <= avail_collateral:
-                        size_yes = r_min_size
-                        size_no = r_min_size
-                        badge_type = f"🎁 DUAL-ALPHA REWARDS ({r_daily:.0f}$/gg)"
-                    else:
-                        size_yes = max(5.0, round(as_res.yes_shares, 1))
-                        size_no = max(5.0, round(as_res.no_shares, 1))
-                        badge_type = "🧠 AVELLANEDA-STOIKOV"
+                # REGOLA FERREA: Dimensionamento SEMPRE >= rewards_min_size (Nessun ordine sotto-soglia!)
+                size_yes = r_min_size
+                size_no = r_min_size
 
-                    cost_yes = round(size_yes * as_res.yes_bid_price, 2)
-                    cost_no = round(size_no * as_res.no_bid_price, 2)
+                cost_yes = round(size_yes * as_res.yes_bid_price, 2)
+                cost_no = round(size_no * as_res.no_bid_price, 2)
+                total_required_cost = cost_yes + cost_no
 
-                    if avail_collateral >= (cost_yes + cost_no):
-                        try:
-                            print(f"[{now_str}] {badge_type} su '{cand['Mercato'][:20]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) | Spesa: {(cost_yes+cost_no):.2f}$ | Edge: +{as_res.expected_edge:.3f}$")
-                            # 1. Order YES
-                            args_yes = OrderArgs(price=round(as_res.yes_bid_price, 3), size=size_yes, side=BUY, token_id=token_id_yes)
-                            res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
-                            # 2. Order NO
-                            args_no = OrderArgs(price=round(as_res.no_bid_price, 3), size=size_no, side=BUY, token_id=token_id_no)
-                            res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
+                # Verifica collaterale: se il saldo non copre la min_size, NON piazza ordini parziali
+                if avail_collateral >= total_required_cost and as_res.expected_edge >= 0.002:
+                    try:
+                        print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS QUALIFICATO ({r_daily:.0f}$/gg) su '{cand['Mercato'][:20]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) | Spesa: {total_required_cost:.2f}$ | Spread: entro {r_max_spread_c}c")
+                        # 1. Order YES
+                        args_yes = OrderArgs(price=round(as_res.yes_bid_price, 3), size=size_yes, side=BUY, token_id=token_id_yes)
+                        res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
+                        # 2. Order NO
+                        args_no = OrderArgs(price=round(as_res.no_bid_price, 3), size=size_no, side=BUY, token_id=token_id_no)
+                        res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
 
-                            if (res_yes.get("success") or res_yes.get("orderID")) and (res_no.get("success") or res_no.get("orderID")):
-                                print(f"[+] ✅ DUAL-ALPHA PIAZZATO CON SUCCESSO SUL BOOK (Qualificato per Rewards + Spread)!")
-                                busy_tokens.add(token_id_yes)
-                                busy_tokens.add(token_id_no)
-                                avail_collateral -= (cost_yes + cost_no)
-                                break
-                        except Exception as as_err:
-                            print(f"[!] Errore piazzamento Dual-Alpha: {as_err}")
+                        if (res_yes.get("success") or res_yes.get("orderID")) and (res_no.get("success") or res_no.get("orderID")):
+                            print(f"[+] ✅ ORDINE CONFERMATO AL 100% CON PUNTEGGIO REWARDS ATTIVO!")
+                            busy_tokens.add(token_id_yes)
+                            busy_tokens.add(token_id_no)
+                            avail_collateral -= total_required_cost
+                            break
+                    except Exception as as_err:
+                        print(f"[!] Errore piazzamento Rewards: {as_err}")
 
 
 
