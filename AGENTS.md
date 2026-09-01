@@ -16,3 +16,10 @@
 - For liquidity rewards farming, target markets with `rewardsDailyRate > 0`, verifying that order sizes meet `rewardsMinSize` and spreads are strictly within `rewardsMaxSpread`.
 - Prioritize dual-bidding (BUY YES + BUY NO) to avoid the $3\times$ penalty applied to single-sided quoting.
 - Note that rewards are distributed automatically daily at 00:00 UTC directly in USDC to maker addresses (minimum $1.00 payout threshold).
+
+## 4. Empirical Data Verification & API Parsing Invariants
+- **Mandatory Live Data Verification:** Never assert market conditions, rewards availability, order book states, or account balances based on assumptions or partial fields. Always execute a live script to query the raw endpoint / contract before formulating conclusions.
+- **Nested Rewards Parsing Invariant:** In the Polymarket Gamma API, top-level `rewardsDailyRate` or `rewardDailyRate` can be `null`/`None` even when active rewards exist. Always inspect the nested `clobRewards` list (`clobRewards[].rewardsDailyRate`) and check `is_order_scoring` / `are_orders_scoring` on the CLOB API.
+- **Proxy Balance Allowance Invariant:** When querying CLOB collateral balances, always pass `signature_type=2` in `BalanceAllowanceParams` to prevent silent exceptions on Polymarket proxy wallets.
+- **Atomic Paired Quoting:** Dual-bidding maker orders (`BUY YES` + `BUY NO`) must be posted with atomic rollback: if one leg fails or is rejected, the sibling leg must be cancelled immediately to prevent orphaned one-sided inventory.
+
