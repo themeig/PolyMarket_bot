@@ -77,7 +77,7 @@ class CompletePolymarketQuantBot:
         self.client.set_api_creds(self.api_creds)
 
         self.initial_usdc = None
-        self.free_usdc = 12.55
+        self.free_usdc = 31.87
         self.pol_gas = self.fetch_onchain_pol()
 
         # =========================================================================
@@ -95,7 +95,7 @@ class CompletePolymarketQuantBot:
         self.take_profit_pct = 15.0
         self.stop_loss_pct = -18.0
         self.position_acquired_ts = {}       # asset_id -> timestamp primo acquisto
-        self.day_start_equity = 12.36         # baseline per il circuit breaker giornaliero
+        self.day_start_equity = 31.87         # baseline per il circuit breaker giornaliero
         self.daily_loss_kill_usdc = 3.00      # Limite massimo perdita giornaliera prima di HALT
         self.market_regime = "NORMAL"         # NORMAL, REDUCE_ONLY, HALTED
         self.active_sell_orders = {}          # asset_id -> {"order_id": str, "price": float}
@@ -148,16 +148,21 @@ class CompletePolymarketQuantBot:
         if hasattr(self, "_cached_cash") and (now - getattr(self, "_cached_cash_ts", 0)) < 3.0:
             return self._cached_cash
         try:
-            usdc_c = self.w3.eth.contract(
+            wrapped_c = self.w3.eth.contract(
+                address=Web3.to_checksum_address("0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"),
+                abi=[{"name": "balanceOf", "inputs": [{"name": "account", "type": "address"}], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}]
+            )
+            bridged_c = self.w3.eth.contract(
                 address=Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
                 abi=[{"name": "balanceOf", "inputs": [{"name": "account", "type": "address"}], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}]
             )
-            onchain_bal = usdc_c.functions.balanceOf(Web3.to_checksum_address(self.proxy_wallet)).call() / 1e6
-            self._cached_cash = float(onchain_bal)
+            bal_w = wrapped_c.functions.balanceOf(Web3.to_checksum_address(self.proxy_wallet)).call() / 1e6
+            bal_b = bridged_c.functions.balanceOf(Web3.to_checksum_address(self.proxy_wallet)).call() / 1e6
+            self._cached_cash = float(bal_w + bal_b)
             self._cached_cash_ts = now
             return self._cached_cash
         except Exception:
-            return getattr(self, "_cached_cash", 12.36)
+            return getattr(self, "_cached_cash", 31.87)
 
     async def trading_loop(self):
         print(f"[+] Motore Ibrido (Market Making & Spread Logico) avviato...")
