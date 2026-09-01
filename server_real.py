@@ -204,7 +204,10 @@ class CompletePolymarketQuantBot:
                 pass
 
         # =========================================================================
-        # 1. AUTO-INVENTORY SELL GUARDIAN & COMPLETE SET MERGER
+        # 1. GESTIONE AUTOMATICA INVENTARIO (AUTO-PAIRING O EXIT PASSIVO A PROFITTO)
+        # Se abbiamo quote in mano da esecuzioni precedenti, le gestiamo PRIMA di aprire nuovi mercati:
+        # Se c'è saldo -> Piazza l'opposto per fare Merge a 1.00$
+        # Se non c'è saldo -> Piazza Limit SELL passivo a profitto (+5%) per recuperare subito USDC liquidi
         # =========================================================================
         async with aiohttp.ClientSession() as session:
             try:
@@ -242,65 +245,76 @@ class CompletePolymarketQuantBot:
                         self.cached_positions = formatted_pos
                         self.cached_positions_val = round(tot_pos_val, 2)
 
-                # Fetch real executed trades from Polymarket Data API
-                trades_url = f"https://data-api.polymarket.com/trades?user={self.proxy_wallet}&limit=20"
-                async with session.get(trades_url, timeout=3) as t_resp:
-                    if t_resp.status == 200:
-                        raw_trades = await t_resp.json()
-                        formatted_trades = []
-                        for t in raw_trades:
-                            ts = t.get("timestamp")
-                            if ts and ts < self.session_start_ts:
-                                continue
-                            time_str = time.strftime('%H:%M:%S', time.localtime(ts)) if ts else "N/D"
-                            side = str(t.get("side", "BUY")).upper()
-                            action = "🟢 COMPRA (BUY)" if side == "BUY" else "🔴 VENDITA (SELL)"
-                            title = t.get("title") or "Mercato Polymarket"
-                            size = float(t.get("size", 0) or 0)
-                            price = float(t.get("price", 0) or 0)
-                            formatted_trades.append({
-                                "time": time_str,
-                                "action": action,
-                                "market": title,
-                                "shares": size,
-                                "price": price,
-                                "pnl": None
-                            })
-                        self.cached_trades = formatted_trades
+                # Scan and execute automated Complete Set Merges (YES+NO -> USDC)
+                try:
+                    self.mergeable_pairs = self.token_merger.find_mergeable_pairs(positions)
+                    if self.enable_auto_merge and self.mergeable_pairs:
+                        for mp in self.mergeable_pairs:
+                            cid = mp.get("condition_id")
+                            shares = mp.get("mergeable_shares", 0)
+                            is_neg = mp.get("is_neg_risk", True)
+                            if shares >= 0.5 and cid:
+                                print(f"[{now_str}] 💎 ESECUZIONE AUTOMATICA FUSIONE ON-CHAIN: {shares} quote su '{mp['market'][:25]}' -> Incasso: {mp['expected_usdc']}$ USDC...")
+                                tx_h = self.token_merger.execute_merge(cid, shares, is_neg)
+                                if tx_h:
+                                    if not hasattr(self, "merge_history"):
+                                        self.merge_history = []
+                                    self.merge_history.append({
+                                        "time": now_str,
+                                        "market": mp["market"],
+                                        "shares": shares,
+                                        "payout": mp["expected_usdc"],
+                                        "tx_hash": tx_h
+                                    })
+                except Exception:
+                    pass
 
-                        # Scan and execute automated Complete Set Merges (YES+NO -> USDC)
+                # Gestione Copertura Inventario
+                avail_collateral_temp = self.get_clob_collateral()
+                for pos in positions:
+                    size = float(pos.get("size", 0) or 0)
+                    cur_val = float(pos.get("currentValue", 0) or 0)
+                    if size < 1.0 or cur_val < 0.50:
+                        continue
+                    
+                    asset_id = str(pos.get("asset"))
+                    opp_asset = pos.get("oppositeAsset")
+                    opp_outcome = pos.get("oppositeOutcome", "YES")
+                    avg_p = float(pos.get("avgPrice", 0) or 0)
+                    title = pos.get("title", "")
+                    
+                    # 1. Se possiamo completare la coppia per fare Merge:
+                    if opp_asset and str(opp_asset) not in open_buy_assets:
+                        target_opp_p = round(min(0.99, max(0.01, 1.00 - avg_p - 0.02)), 2)
+                        needed_cost = round(size * target_opp_p, 2)
+                        if avail_collateral_temp >= needed_cost:
+                            print(f"[{now_str}] 🧩 COMPLETAMENTO COPPIA PER MERGE: BUY {size:.0f} {opp_outcome} @ {target_opp_p:.2f}$ (Spesa: {needed_cost:.2f}$)...")
+                            try:
+                                opp_args = OrderArgsV2(token_id=str(opp_asset), price=target_opp_p, size=size, side="BUY")
+                                opp_res = self.client.post_order(self.client.create_order(opp_args), OrderType.GTC)
+                                if opp_res.get("success") or opp_res.get("orderID"):
+                                    open_buy_assets.add(str(opp_asset))
+                                    avail_collateral_temp -= needed_cost
+                                    continue
+                            except Exception:
+                                pass
+                    
+                    # 2. Se non abbiamo fondi per comprare l'opposto, piazzi Limit SELL passivo a profitto (+5%)
+                    if asset_id not in open_sell_assets:
+                        sell_target_p = round(min(0.99, max(0.01, avg_p * 1.05)), 2)
+                        print(f"[{now_str}] 📌 COPERTURA PASSIVA A PROFITTO: SELL {size:.0f} quote {pos.get('outcome')} '{title[:20]}' @ {sell_target_p:.2f}$ (Carico: {avg_p:.3f}$)...")
                         try:
-                            self.mergeable_pairs = self.token_merger.find_mergeable_pairs(positions)
-                            if self.enable_auto_merge and self.mergeable_pairs:
-                                for mp in self.mergeable_pairs:
-                                    cid = mp.get("condition_id")
-                                    shares = mp.get("mergeable_shares", 0)
-                                    is_neg = mp.get("is_neg_risk", True)
-                                    if shares >= 0.5 and cid:
-                                        print(f"[{now_str}] 💎 ESECUZIONE AUTOMATICA FUSIONE ON-CHAIN: {shares} quote su '{mp['market'][:25]}' -> Incasso: {mp['expected_usdc']}$ USDC...")
-                                        tx_h = self.token_merger.execute_merge(cid, shares, is_neg)
-                                        if tx_h:
-                                            if not hasattr(self, "merge_history"):
-                                                self.merge_history = []
-                                            self.merge_history.append({
-                                                "time": now_str,
-                                                "market": mp["market"],
-                                                "shares": shares,
-                                                "payout": mp["expected_usdc"],
-                                                "tx_hash": tx_h
-                                            })
-                        except Exception as me:
+                            s_args = OrderArgsV2(token_id=asset_id, price=sell_target_p, size=size, side="SELL")
+                            s_res = self.client.post_order(self.client.create_order(s_args), OrderType.GTC)
+                            if s_res.get("success") or s_res.get("orderID"):
+                                open_sell_assets.add(asset_id)
+                        except Exception:
                             pass
-                        # ---------------------------------------------------------
-                        # 2. LIVELLO 2: GESTIONE INVENTARIO & MERGE (Zero scarichi singoli a mercato)
-                        # Invariante ferrea: Solo uscite bilanciate o Merge on-chain
-                        # ---------------------------------------------------------
-                        pass
             except Exception:
                 pass
 
         # =========================================================================
-        # 2. SCREENER (DUAL-ALPHA REWARDS + MARKET MAKING + SPREAD LOGICO)
+        # 2. SCREENER (DUAL-ALPHA REWARDS)
         # =========================================================================
         if (time.time() - self.last_scan_time) >= 10:
             markets, _ = await get_all_active_markets(total_to_fetch=1200)
@@ -311,18 +325,15 @@ class CompletePolymarketQuantBot:
                     self.market_names_cache[str(clob_id)] = m.get("question", "")
             self.last_scan_time = time.time()
 
-        if (time.time() - self.last_logical_scan_time) >= 15:
-            try:
-                self.logical_opportunities = await fetch_all_logical_opportunities(exclude_sports=self.exclude_sports, total_events_to_scan=200)
-                self.last_logical_scan_time = time.time()
-            except Exception:
-                pass
-
         # =========================================================================
-        # 3. PIAZZAMENTO NUOVI ORDINI DI ACQUISTO (STRICT REWARDS-ONLY & MIN-SIZE)
+        # 3. PIAZZAMENTO NUOVI ORDINI A DUE DIREZIONI (RIGOROSAMENTE COPPIE COMPLETE)
         # =========================================================================
         avail_collateral = self.get_clob_collateral()
         busy_tokens = open_buy_assets.union(open_sell_assets)
+
+        # Se abbiamo già ordini di acquisto attivi sul book, NON ne apriamo altri per non disperdere il collaterale
+        if len(open_buy_assets) > 0:
+            return
 
         # Circuit Breaker Globale: Daily Loss Kill-Switch (poly-maker style)
         open_orders_val = sum(float(o.get("price", 0) or 0) * float(o.get("original_size", 0) or 0) for o in open_orders if o.get("side") == "BUY")
@@ -341,143 +352,112 @@ class CompletePolymarketQuantBot:
                 if self.market_regime == "HALTED":
                     self.market_regime = "NORMAL"
 
-        # Se siamo in HALTED, non piazziamo nuovi ordini di acquisto per proteggere il capitale
         if self.market_regime == "HALTED":
             return
 
-        # Motore Strict Rewards-Only: Quota SOLO mercati con Rewards e SEMPRE >= min_size
         if self.enable_as_mm:
-            # 1. Filtra rigorosamente solo mercati con Rewards attive e min_size definita
             reward_candidates = [
                 c for c in self.rewards_screener 
                 if float(c.get("rewards_min_size", 0) or 0) > 0 and float(c.get("rewards_daily", 0) or 0) > 0
             ]
 
-            # 2. RICONCILIAZIONE DINAMICA ORDINI ESISTENTI (Poly-Maker Order Reconciler)
-            # Se gli ordini attivi si sono allontanati dal midpoint / usciti dallo spread target, cancellali e riposizionali
-            await self.reconcile_active_rewards_orders(open_orders, reward_candidates, now_str)
-
-            # Ordina per convenienza: privilegia mercati con min_size accessibile rispetto al collaterale disponibile
             reward_candidates = sorted(
                 reward_candidates, 
                 key=lambda x: (float(x.get("rewards_min_size", 999)) <= 50, float(x.get("rewards_daily", 0))), 
                 reverse=True
             )
 
-            if avail_collateral >= 3.0 and len(open_orders) < self.max_total_open_orders:
-                for cand in reward_candidates:
-                    token_id_yes = str(cand.get("token_id", ""))
-                    tokens_raw = cand.get("clob_token_ids", [])
-                    if isinstance(tokens_raw, list) and len(tokens_raw) >= 2:
-                        token_id_yes = str(tokens_raw[0])
-                        token_id_no = str(tokens_raw[1])
-                    else:
-                        continue
+            for cand in reward_candidates:
+                token_id_yes = str(cand.get("token_id", ""))
+                tokens_raw = cand.get("clob_token_ids", [])
+                if isinstance(tokens_raw, list) and len(tokens_raw) >= 2:
+                    token_id_yes = str(tokens_raw[0])
+                    token_id_no = str(tokens_raw[1])
+                else:
+                    continue
 
-                    if token_id_yes in busy_tokens or token_id_no in busy_tokens:
-                        continue
+                if token_id_yes in busy_tokens or token_id_no in busy_tokens:
+                    continue
 
-                    m_id = str(cand.get("id", token_id_yes))
-                    r_min_size = float(cand.get("rewards_min_size", 0) or 0)
-                    r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
-                    r_daily = float(cand.get("rewards_daily", 0) or 0)
+                m_id = str(cand.get("id", token_id_yes))
+                r_min_size = float(cand.get("rewards_min_size", 0) or 0)
+                r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
+                r_daily = float(cand.get("rewards_daily", 0) or 0)
 
-                    # Fetch prezzi touch live dal book CLOB
-                    yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
-                    yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
+                # Fetch prezzi touch live dal book CLOB
+                yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
+                yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
+                try:
+                    book_y = self.client.get_order_book(token_id_yes)
+                    bids_y = book_y.get("bids", []) if isinstance(book_y, dict) else getattr(book_y, "bids", [])
+                    asks_y = book_y.get("asks", []) if isinstance(book_y, dict) else getattr(book_y, "asks", [])
+                    if bids_y:
+                        yes_bid_live = float(bids_y[0].get("price") if isinstance(bids_y[0], dict) else bids_y[0].price)
+                    if asks_y:
+                        yes_ask_live = float(asks_y[0].get("price") if isinstance(asks_y[0], dict) else asks_y[0].price)
+                except Exception:
+                    pass
+
+                mid_live = (yes_bid_live + yes_ask_live) / 2.0 if (yes_bid_live > 0 and yes_ask_live < 1.0) else 0.50
+                max_half_spread = (r_max_spread_c / 100.0) / 2.0 if r_max_spread_c > 0 else 0.02
+
+                # Prezzi Target In-Band
+                yes_quote_p = max(0.01, min(0.99, round(mid_live - max_half_spread, 2)))
+                no_quote_p = max(0.01, min(0.99, round((1.0 - mid_live) - max_half_spread, 2)))
+
+                size_yes = max(r_min_size, 20.0)
+                size_no = max(r_min_size, 20.0)
+
+                cost_yes = round(size_yes * yes_quote_p, 2)
+                cost_no = round(size_no * no_quote_p, 2)
+                total_required_cost = round(cost_yes + cost_no + 0.20, 2)
+
+                # REGOLA IMPERATIVA: O copre AL 100% ENTRAMBI I LATI, O NON PIAZZA NULLA
+                if avail_collateral < total_required_cost:
+                    continue
+
+                try:
+                    print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS (2 LATI): BUY YES @ {yes_quote_p:.2f}$ ({size_yes}q) + BUY NO @ {no_quote_p:.2f}$ ({size_no}q) | Spesa Totale: {total_required_cost:.2f}$ | Saldo: {avail_collateral:.2f}$")
+                    
+                    args_yes = OrderArgsV2(price=yes_quote_p, size=size_yes, side="BUY", token_id=token_id_yes)
+                    args_no = OrderArgsV2(price=no_quote_p, size=size_no, side="BUY", token_id=token_id_no)
+
+                    res_yes = None
                     try:
-                        book_y = self.client.get_order_book(token_id_yes)
-                        bids_y = book_y.get("bids", []) if isinstance(book_y, dict) else getattr(book_y, "bids", [])
-                        asks_y = book_y.get("asks", []) if isinstance(book_y, dict) else getattr(book_y, "asks", [])
-                        if bids_y:
-                            yes_bid_live = float(bids_y[0].get("price") if isinstance(bids_y[0], dict) else bids_y[0].price)
-                        if asks_y:
-                            yes_ask_live = float(asks_y[0].get("price") if isinstance(asks_y[0], dict) else asks_y[0].price)
-                    except Exception:
-                        pass
+                        res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
+                    except Exception as ye:
+                        res_yes = {"error": str(ye)}
 
-                    # Calcolo Avellaneda-Stoikov & Clamping rigoroso dentro la banda Rewards
-                    as_res = self.as_engine.compute_quotes(
-                        market_id=m_id,
-                        yes_best_bid=yes_bid_live,
-                        yes_best_ask=yes_ask_live,
-                        no_best_bid=round(1.0 - yes_ask_live, 3) if yes_ask_live else None,
-                        no_best_ask=round(1.0 - yes_bid_live, 3) if yes_bid_live else None
-                    )
+                    res_no = None
+                    try:
+                        res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
+                    except Exception as no_err:
+                        res_no = {"error": str(no_err)}
 
-                    mid_live = (yes_bid_live + yes_ask_live) / 2.0 if (yes_bid_live > 0 and yes_ask_live < 1.0) else as_res.fair_value
-                    max_half_spread = (r_max_spread_c / 100.0) / 2.0 if r_max_spread_c > 0 else 0.02
+                    yes_id = (res_yes.get("orderID") or res_yes.get("id")) if isinstance(res_yes, dict) else None
+                    no_id = (res_no.get("orderID") or res_no.get("id")) if isinstance(res_no, dict) else None
 
-                    # Prezzi Target rigorosamente In-Band (Entro rewardsMaxSpread dal Midpoint)
-                    yes_quote_p = max(0.001, min(0.999, round(mid_live - max_half_spread, 3)))
-                    no_quote_p = max(0.001, min(0.999, round((1.0 - mid_live) - max_half_spread, 3)))
-
-                    self.last_as_quotes[m_id] = {
-                        "market": cand.get("Mercato", ""),
-                        "fair_value": as_res.fair_value,
-                        "r": as_res.reservation_price,
-                        "delta": max_half_spread,
-                        "vol": as_res.volatility,
-                        "yes_bid": yes_quote_p,
-                        "no_bid": no_quote_p,
-                        "expected_edge": as_res.expected_edge,
-                        "rewards_daily": r_daily,
-                        "rewards_min_size": r_min_size
-                    }
-
-                    # REGOLA FERREA: Dimensionamento SEMPRE >= rewards_min_size (Nessun ordine sotto-soglia!)
-                    size_yes = r_min_size
-                    size_no = r_min_size
-
-                    cost_yes = round(size_yes * yes_quote_p, 2)
-                    cost_no = round(size_no * no_quote_p, 2)
-                    total_required_cost = cost_yes + cost_no
-
-                    # Verifica collaterale: se il saldo non copre la min_size, NON piazza ordini parziali
-                    if avail_collateral >= total_required_cost:
+                    # GARANZIA ATOMICA: Se uno dei due fallisce, cancella SUBITO l'altro
+                    if yes_id and not no_id:
+                        print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito. Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani!")
                         try:
-                            print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS QUALIFICATO ({r_daily:.0f}$/gg) su '{cand['Mercato'][:20]}': BUY YES @ {yes_quote_p:.3f}$ ({size_yes}q) + BUY NO @ {no_quote_p:.3f}$ ({size_no}q) | Spesa: {total_required_cost:.2f}$ | Spread: entro {r_max_spread_c}c")
-                            
-                            # 1. Crea entrambi gli ordini
-                            args_yes = OrderArgs(price=yes_quote_p, size=size_yes, side=BUY, token_id=token_id_yes)
-                            args_no = OrderArgs(price=no_quote_p, size=size_no, side=BUY, token_id=token_id_no)
-
-                            res_yes = None
-                            try:
-                                res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
-                            except Exception as ye:
-                                res_yes = {"error": str(ye)}
-
-                            res_no = None
-                            try:
-                                res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
-                            except Exception as no_err:
-                                res_no = {"error": str(no_err)}
-
-                            yes_id = (res_yes.get("orderID") or res_yes.get("id")) if isinstance(res_yes, dict) else None
-                            no_id = (res_no.get("orderID") or res_no.get("id")) if isinstance(res_no, dict) else None
-
-                            # GARANZIA ATOMICA: Se uno dei due fallisce, cancella subito l'altro (Zero Ordini Orfani!)
-                            if yes_id and not no_id:
-                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito ({res_no.get('error') if isinstance(res_no, dict) else ''}). Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani a un solo lato!")
-                                try:
-                                    self.client.cancel_orders([yes_id])
-                                except Exception as ce:
-                                    print(f"[!] Errore cancellazione rollback: {ce}")
-                            elif no_id and not yes_id:
-                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito ({res_yes.get('error') if isinstance(res_yes, dict) else ''}). Cancello subito NO ({no_id[:10]}...)!")
-                                try:
-                                    self.client.cancel_orders([no_id])
-                                except Exception as ce:
-                                    print(f"[!] Errore cancellazione rollback: {ce}")
-                            elif yes_id and no_id:
-                                print(f"[+] ✅ COPPIA ATOMICA DUAL-BIDDING CONFERMATA AL 100% SUL BOOK (Qualificata per Merge + Rewards)!")
-                                busy_tokens.add(token_id_yes)
-                                busy_tokens.add(token_id_no)
-                                avail_collateral -= total_required_cost
-                                break
-                        except Exception as as_err:
-                            print(f"[!] Errore piazzamento Rewards: {as_err}")
+                            self.client.cancel_orders([yes_id])
+                        except Exception:
+                            pass
+                    elif no_id and not yes_id:
+                        print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito. Cancello subito NO ({no_id[:10]}...)!")
+                        try:
+                            self.client.cancel_orders([no_id])
+                        except Exception:
+                            pass
+                    elif yes_id and no_id:
+                        print(f"[+] ✅ COPPIA ATOMICA A DUE DIREZIONI CONFERMATA SUL BOOK!")
+                        busy_tokens.add(token_id_yes)
+                        busy_tokens.add(token_id_no)
+                        avail_collateral -= total_required_cost
+                        break
+                except Exception as as_err:
+                    print(f"[!] Errore piazzamento Rewards: {as_err}")
 
 
 
