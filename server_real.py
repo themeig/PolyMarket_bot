@@ -70,7 +70,7 @@ class CompletePolymarketQuantBot:
             host="https://clob.polymarket.com", 
             key=self.private_key, 
             chain_id=137,
-            signature_type=3,
+            signature_type=2,
             funder=self.proxy_wallet
         )
         self.api_creds = self.client.create_or_derive_api_key()
@@ -79,6 +79,10 @@ class CompletePolymarketQuantBot:
         self.initial_usdc = None
         self.free_usdc = 31.87
         self.pol_gas = self.fetch_onchain_pol()
+        self.session_start_ts = time.time()
+        self.trade_history = []
+        self.cached_trades = []
+        self.merge_history = []
 
         # =========================================================================
         # PARAMETRI DINAMICI & FILTRI
@@ -246,6 +250,8 @@ class CompletePolymarketQuantBot:
                         formatted_trades = []
                         for t in raw_trades:
                             ts = t.get("timestamp")
+                            if ts and ts < self.session_start_ts:
+                                continue
                             time_str = time.strftime('%H:%M:%S', time.localtime(ts)) if ts else "N/D"
                             side = str(t.get("side", "BUY")).upper()
                             action = "🟢 COMPRA (BUY)" if side == "BUY" else "🔴 VENDITA (SELL)"
