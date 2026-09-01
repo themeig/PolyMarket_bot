@@ -398,7 +398,8 @@ class CompletePolymarketQuantBot:
                 except Exception:
                     pass
 
-                mid_live = (yes_bid_live + yes_ask_live) / 2.0 if (yes_bid_live > 0 and yes_ask_live < 1.0) else 0.50
+                gamma_p = float(cand.get("price", 0.50) or 0.50)
+                mid_live = (yes_bid_live + yes_ask_live) / 2.0 if (yes_bid_live > 0.01 and yes_ask_live < 0.99) else gamma_p
                 max_half_spread = (r_max_spread_c / 100.0) / 2.0 if r_max_spread_c > 0 else 0.02
 
                 # Prezzi Target In-Band
