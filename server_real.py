@@ -331,8 +331,19 @@ class CompletePolymarketQuantBot:
         avail_collateral = self.get_clob_collateral()
         busy_tokens = open_buy_assets.union(open_sell_assets)
 
-        # Se abbiamo già ordini di acquisto attivi sul book, NON ne apriamo altri per non disperdere il collaterale
-        if len(open_buy_assets) > 0:
+        # Controllo di Parità: Se c'è solo 1 ordine BUY orfano, cancellalo subito per ripristinare la coppia pura
+        buy_orders_list = [o for o in open_orders if o.get("side") == "BUY"]
+        if len(buy_orders_list) == 1:
+            orphan_id = buy_orders_list[0].get("id") or buy_orders_list[0].get("orderID")
+            print(f"[{now_str}] ⚠️ RILEVATO ORDINE SINGOLO ORFANO ({orphan_id[:10]}...). Cancellazione per ripristinare la coppia pura a due lati!")
+            try:
+                self.client.cancel_orders([orphan_id])
+                open_buy_assets.clear()
+            except Exception:
+                pass
+
+        # Se abbiamo già la coppia bivalente completa attiva (2 ordini BUY), attendiamo senza disperdere collaterale
+        if len(open_buy_assets) >= 2:
             return
 
         # Circuit Breaker Globale: Daily Loss Kill-Switch (poly-maker style)
