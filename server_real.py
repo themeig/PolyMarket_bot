@@ -413,15 +413,30 @@ class CompletePolymarketQuantBot:
                 if avail_collateral >= total_required_cost and as_res.expected_edge >= 0.002:
                     try:
                         print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS QUALIFICATO ({r_daily:.0f}$/gg) su '{cand['Mercato'][:20]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) | Spesa: {total_required_cost:.2f}$ | Spread: entro {r_max_spread_c}c")
-                        # 1. Order YES
+                        
+                        # 1. Crea entrambi gli ordini
                         args_yes = OrderArgs(price=round(as_res.yes_bid_price, 3), size=size_yes, side=BUY, token_id=token_id_yes)
-                        res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
-                        # 2. Order NO
                         args_no = OrderArgs(price=round(as_res.no_bid_price, 3), size=size_no, side=BUY, token_id=token_id_no)
-                        res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
 
-                        if (res_yes.get("success") or res_yes.get("orderID")) and (res_no.get("success") or res_no.get("orderID")):
-                            print(f"[+] ✅ ORDINE CONFERMATO AL 100% CON PUNTEGGIO REWARDS ATTIVO!")
+                        res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
+                        yes_id = res_yes.get("id") or res_yes.get("orderID") if (res_yes.get("success") or res_yes.get("orderID")) else None
+
+                        try:
+                            res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
+                            no_id = res_no.get("id") or res_no.get("orderID") if (res_no.get("success") or res_no.get("orderID")) else None
+                        except Exception as no_err:
+                            res_no = {"error": str(no_err)}
+                            no_id = None
+
+                        # GARANZIA ATOMICA: Se uno dei due fallisce, cancella subito l'altro (Zero Ordini Orfani!)
+                        if yes_id and not no_id:
+                            print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito. Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani a un solo lato!")
+                            self.client.cancel(yes_id)
+                        elif no_id and not yes_id:
+                            print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito. Cancello subito NO ({no_id[:10]}...)!")
+                            self.client.cancel(no_id)
+                        elif yes_id and no_id:
+                            print(f"[+] ✅ COPPIA ATOMICA DUAL-BIDDING CONFERMATA AL 100% SUL BOOK (Qualificata per Merge + Rewards)!")
                             busy_tokens.add(token_id_yes)
                             busy_tokens.add(token_id_no)
                             avail_collateral -= total_required_cost
