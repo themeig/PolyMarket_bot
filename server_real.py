@@ -286,92 +286,10 @@ class CompletePolymarketQuantBot:
                         except Exception as me:
                             pass
                         # ---------------------------------------------------------
-                        # 2. LIVELLO 2: DYNAMIC MAKER EXIT CON URGENZA (_maybe_exit)
-                        # Zero scarichi a mercato. Formula: target = passive * (1-u) + floor * u
-                        # Invariante ferrea: NEVER cross down through the bid!
+                        # 2. LIVELLO 2: GESTIONE INVENTARIO & MERGE (Zero scarichi singoli a mercato)
+                        # Invariante ferrea: Solo uscite bilanciate o Merge on-chain
                         # ---------------------------------------------------------
-                        now_ts = time.time()
-                        for pos in positions:
-                            size = float(pos.get("size", 0) or 0)
-                            cur_val = float(pos.get("currentValue", 0) or 0)
-                            cur_p = float(pos.get("curPrice", 0) or 0)
-                            if size < 1.0 or cur_val < 0.50 or cur_p < 0.03:
-                                continue
-                            avg_p = float(pos.get("avgPrice", 0) or 0)
-                            cur_p = float(pos.get("curPrice", 0) or 0)
-                            asset_id = str(pos.get("asset"))
-                            title = pos.get("title", "")
-
-                            if title:
-                                self.market_names_cache[asset_id] = title
-
-                            # Traccia il tempo di detenzione dell'inventario
-                            if asset_id not in self.position_acquired_ts:
-                                self.position_acquired_ts[asset_id] = now_ts
-                            hold_time_s = now_ts - self.position_acquired_ts[asset_id]
-
-                            # Calcolo dell'Urgenza in [0.0, 1.0] basato su tempo di detenzione e regime
-                            urgency = min(1.0, hold_time_s / 600.0)  # sale a 1.0 in 10 minuti
-                            if self.market_regime == "REDUCE_ONLY":
-                                urgency = max(urgency, 0.5)
-
-                            # Fetch book live per posizionare l'uscita Maker ideale
-                            best_bid = None
-                            best_ask = None
-                            try:
-                                async with session.get(f"https://clob.polymarket.com/book?token_id={asset_id}", timeout=2) as b_resp:
-                                    if b_resp.status == 200:
-                                        b_data = await b_resp.json()
-                                        bids = b_data.get("bids", [])
-                                        asks = b_data.get("asks", [])
-                                        if bids:
-                                            best_bid = float(bids[0]["price"])
-                                        if asks:
-                                            best_ask = float(asks[0]["price"])
-                            except Exception:
-                                pass
-
-                            # Prezzo passivo (+15% di margine sopra il prezzo medio di carico)
-                            passive = round(max(avg_p * 1.15, (cur_p + 0.02) if cur_p > 0 else 0.50), 3)
-                            # Prezzo floor: in cima alla fila degli Ask (Best Bid + 0.001$), mai sotto
-                            floor = round((best_bid + 0.001) if best_bid is not None else passive, 3)
-
-                            # Calcolo target interpolato dall'urgenza
-                            target = passive * (1.0 - urgency) + floor * urgency
-
-                            # INVARIANTE CARDINE POLY-MAKER: Never cross down through the bid!
-                            if best_bid is not None:
-                                target = max(target, best_bid + 0.001)
-
-                            target_sell = round(min(0.999, max(0.001, target)), 3)
-
-                            # Verifica se l'ordine di vendita esistente deve essere aggiornato o piazzato
-                            existing_sell = self.active_sell_orders.get(asset_id)
-                            need_update = True
-                            if existing_sell and asset_id in open_sell_assets:
-                                old_price = existing_sell.get("price", 0)
-                                if abs(old_price - target_sell) < 0.003:
-                                    need_update = False  # Già piazzato al prezzo ottimale
-
-                            if need_update and size >= 1.0:
-                                # Cancella eventuale vecchio ordine di vendita disallineato
-                                if existing_sell and existing_sell.get("order_id"):
-                                    try:
-                                        self.client.cancel_orders([existing_sell["order_id"]])
-                                    except Exception:
-                                        pass
-
-                                print(f"[{now_str}] 📌 MAKER EXIT DINAMICO (Urgenza {urgency:.2f}): {size:.1f} quote '{title[:22]}' ad ASK target {target_sell:.3f}$ (Floor: {floor:.3f}$, Passive: {passive:.3f}$)...")
-                                try:
-                                    sell_args = OrderArgs(price=target_sell, size=round(size, 1), side=SELL, token_id=asset_id)
-                                    s_res = self.client.post_order(self.client.create_order(sell_args), OrderType.GTC)
-                                    s_id = s_res.get("id") or s_res.get("orderID")
-                                    if s_res.get("success") or s_id:
-                                        print(f"[+] ✅ MAKER EXIT CONFERMATO SUL BOOK ({target_sell:.3f}$)")
-                                        self.active_sell_orders[asset_id] = {"order_id": s_id, "price": target_sell}
-                                        open_sell_assets.add(asset_id)
-                                except Exception as se:
-                                    print(f"[!] Errore piazzamento Maker Exit: {se}")
+                        pass
             except Exception:
                 pass
 
@@ -518,29 +436,34 @@ class CompletePolymarketQuantBot:
                             args_yes = OrderArgs(price=yes_quote_p, size=size_yes, side=BUY, token_id=token_id_yes)
                             args_no = OrderArgs(price=no_quote_p, size=size_no, side=BUY, token_id=token_id_no)
 
-                            res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
-                            yes_id = res_yes.get("id") or res_yes.get("orderID") if (res_yes.get("success") or res_yes.get("orderID")) else None
+                            res_yes = None
+                            try:
+                                res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
+                            except Exception as ye:
+                                res_yes = {"error": str(ye)}
 
+                            res_no = None
                             try:
                                 res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
-                                no_id = res_no.get("id") or res_no.get("orderID") if (res_no.get("success") or res_no.get("orderID")) else None
                             except Exception as no_err:
                                 res_no = {"error": str(no_err)}
-                                no_id = None
+
+                            yes_id = (res_yes.get("orderID") or res_yes.get("id")) if isinstance(res_yes, dict) else None
+                            no_id = (res_no.get("orderID") or res_no.get("id")) if isinstance(res_no, dict) else None
 
                             # GARANZIA ATOMICA: Se uno dei due fallisce, cancella subito l'altro (Zero Ordini Orfani!)
                             if yes_id and not no_id:
-                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito. Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani a un solo lato!")
+                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito ({res_no.get('error') if isinstance(res_no, dict) else ''}). Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani a un solo lato!")
                                 try:
                                     self.client.cancel_orders([yes_id])
-                                except Exception:
-                                    pass
+                                except Exception as ce:
+                                    print(f"[!] Errore cancellazione rollback: {ce}")
                             elif no_id and not yes_id:
-                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito. Cancello subito NO ({no_id[:10]}...)!")
+                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito ({res_yes.get('error') if isinstance(res_yes, dict) else ''}). Cancello subito NO ({no_id[:10]}...)!")
                                 try:
                                     self.client.cancel_orders([no_id])
-                                except Exception:
-                                    pass
+                                except Exception as ce:
+                                    print(f"[!] Errore cancellazione rollback: {ce}")
                             elif yes_id and no_id:
                                 print(f"[+] ✅ COPPIA ATOMICA DUAL-BIDDING CONFERMATA AL 100% SUL BOOK (Qualificata per Merge + Rewards)!")
                                 busy_tokens.add(token_id_yes)
