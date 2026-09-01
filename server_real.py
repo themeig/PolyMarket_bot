@@ -346,9 +346,8 @@ class CompletePolymarketQuantBot:
         if len(open_buy_assets) >= 2:
             return
 
-        # Circuit Breaker Globale: Daily Loss Kill-Switch (poly-maker style)
-        open_orders_val = sum(float(o.get("price", 0) or 0) * float(o.get("original_size", 0) or 0) for o in open_orders if o.get("side") == "BUY")
-        current_equity = avail_collateral + open_orders_val + getattr(self, "cached_positions_val", 0.0)
+        # Circuit Breaker Globale: Net Worth Reale (Collaterale + Posizioni)
+        current_equity = avail_collateral + getattr(self, "cached_positions_val", 0.0)
         if getattr(self, "day_start_equity", None) is None or self.day_start_equity <= 0:
             if current_equity > 0:
                 self.day_start_equity = current_equity
@@ -357,7 +356,7 @@ class CompletePolymarketQuantBot:
             daily_loss = current_equity - self.day_start_equity
             if daily_loss <= -self.daily_loss_kill_usdc:
                 if self.market_regime != "HALTED":
-                    print(f"[{now_str}] 🛑 GLOBAL RISK BREAKER: Perdita giornaliera ({daily_loss:.2f}$) ha superato il limite (-{self.daily_loss_kill_usdc:.2f}$). Passaggio in HALTED (Solo Exits & Merges)!")
+                    print(f"[{now_str}] 🛑 GLOBAL RISK BREAKER: Perdita reale ({daily_loss:.2f}$) ha superato il limite (-{self.daily_loss_kill_usdc:.2f}$). Passaggio in HALTED (Solo Exits & Merges)!")
                     self.market_regime = "HALTED"
             else:
                 if self.market_regime == "HALTED":
