@@ -296,9 +296,9 @@ class CompletePolymarketQuantBot:
                                 b_list = book_opp.get("bids", []) if isinstance(book_opp, dict) else getattr(book_opp, "bids", [])
                                 a_list = book_opp.get("asks", []) if isinstance(book_opp, dict) else getattr(book_opp, "asks", [])
                                 if b_list:
-                                    opp_bid = float(b_list[0].get("price") if isinstance(b_list[0], dict) else b_list[0].price)
+                                    opp_bid = max(float(b.get("price") if isinstance(b, dict) else b.price) for b in b_list)
                                 if a_list:
-                                    opp_ask = float(a_list[0].get("price") if isinstance(a_list[0], dict) else a_list[0].price)
+                                    opp_ask = min(float(a.get("price") if isinstance(a, dict) else a.price) for a in a_list)
                             except Exception:
                                 pass
                             
@@ -412,9 +412,9 @@ class CompletePolymarketQuantBot:
                     bids_y = book_y.get("bids", []) if isinstance(book_y, dict) else getattr(book_y, "bids", [])
                     asks_y = book_y.get("asks", []) if isinstance(book_y, dict) else getattr(book_y, "asks", [])
                     if bids_y:
-                        yes_bid_live = float(bids_y[0].get("price") if isinstance(bids_y[0], dict) else bids_y[0].price)
+                        yes_bid_live = max(float(b.get("price") if isinstance(b, dict) else b.price) for b in bids_y)
                     if asks_y:
-                        yes_ask_live = float(asks_y[0].get("price") if isinstance(asks_y[0], dict) else asks_y[0].price)
+                        yes_ask_live = min(float(a.get("price") if isinstance(a, dict) else a.price) for a in asks_y)
                 except Exception:
                     pass
 
