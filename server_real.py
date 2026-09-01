@@ -94,6 +94,11 @@ class CompletePolymarketQuantBot:
         self.max_order_spend = 1.60
         self.take_profit_pct = 15.0
         self.stop_loss_pct = -18.0
+        self.position_acquired_ts = {}       # asset_id -> timestamp primo acquisto
+        self.day_start_equity = 12.55         # baseline per il circuit breaker giornaliero
+        self.daily_loss_kill_usdc = 5.00      # Limite massimo perdita giornaliera prima di HALT
+        self.market_regime = "NORMAL"         # NORMAL, REDUCE_ONLY, HALTED
+        self.active_sell_orders = {}          # asset_id -> {"order_id": str, "price": float}
 
         self.as_engine = AvellanedaStoikovEngine(
             gamma=self.as_gamma,
@@ -111,7 +116,7 @@ class CompletePolymarketQuantBot:
         self.mergeable_pairs = []
         self.last_heartbeat_time = 0
 
-        self.killswitch_loss_limit = 2.50
+        self.killswitch_loss_limit = 5.00
 
         self.running = True
         self.killswitch_triggered = False
@@ -272,8 +277,16 @@ class CompletePolymarketQuantBot:
                                             })
                         except Exception as me:
                             pass
+                        # ---------------------------------------------------------
+                        # 2. LIVELLO 2: DYNAMIC MAKER EXIT CON URGENZA (_maybe_exit)
+                        # Zero scarichi a mercato. Formula: target = passive * (1-u) + floor * u
+                        # Invariante ferrea: NEVER cross down through the bid!
+                        # ---------------------------------------------------------
+                        now_ts = time.time()
                         for pos in positions:
                             size = float(pos.get("size", 0) or 0)
+                            if size < 0.5:
+                                continue
                             avg_p = float(pos.get("avgPrice", 0) or 0)
                             cur_p = float(pos.get("curPrice", 0) or 0)
                             asset_id = str(pos.get("asset"))
@@ -282,33 +295,73 @@ class CompletePolymarketQuantBot:
                             if title:
                                 self.market_names_cache[asset_id] = title
 
-                            if size >= 1.0 and avg_p > 0 and cur_p >= 0.01 and asset_id not in open_sell_assets:
-                                target_sell = round(max(avg_p * 1.18, cur_p + 0.02), 3)
-                                target_sell = min(0.999, max(0.001, target_sell))
+                            # Traccia il tempo di detenzione dell'inventario
+                            if asset_id not in self.position_acquired_ts:
+                                self.position_acquired_ts[asset_id] = now_ts
+                            hold_time_s = now_ts - self.position_acquired_ts[asset_id]
 
-                                print(f"[{now_str}] 📌 AUTO-CREAZIONE ORDINE DI VENDITA: {size} quote di '{title[:25]}' ad ASK target {target_sell:.3f}$ (+18% margine)...")
+                            # Calcolo dell'Urgenza in [0.0, 1.0] basato su tempo di detenzione e regime
+                            urgency = min(1.0, hold_time_s / 600.0)  # sale a 1.0 in 10 minuti
+                            if self.market_regime == "REDUCE_ONLY":
+                                urgency = max(urgency, 0.5)
+
+                            # Fetch book live per posizionare l'uscita Maker ideale
+                            best_bid = None
+                            best_ask = None
+                            try:
+                                async with session.get(f"https://clob.polymarket.com/book?token_id={asset_id}", timeout=2) as b_resp:
+                                    if b_resp.status == 200:
+                                        b_data = await b_resp.json()
+                                        bids = b_data.get("bids", [])
+                                        asks = b_data.get("asks", [])
+                                        if bids:
+                                            best_bid = float(bids[0]["price"])
+                                        if asks:
+                                            best_ask = float(asks[0]["price"])
+                            except Exception:
+                                pass
+
+                            # Prezzo passivo (+15% di margine sopra il prezzo medio di carico)
+                            passive = round(max(avg_p * 1.15, (cur_p + 0.02) if cur_p > 0 else 0.50), 3)
+                            # Prezzo floor: in cima alla fila degli Ask (Best Bid + 0.001$), mai sotto
+                            floor = round((best_bid + 0.001) if best_bid is not None else passive, 3)
+
+                            # Calcolo target interpolato dall'urgenza
+                            target = passive * (1.0 - urgency) + floor * urgency
+
+                            # INVARIANTE CARDINE POLY-MAKER: Never cross down through the bid!
+                            if best_bid is not None:
+                                target = max(target, best_bid + 0.001)
+
+                            target_sell = round(min(0.999, max(0.001, target)), 3)
+
+                            # Verifica se l'ordine di vendita esistente deve essere aggiornato o piazzato
+                            existing_sell = self.active_sell_orders.get(asset_id)
+                            need_update = True
+                            if existing_sell and asset_id in open_sell_assets:
+                                old_price = existing_sell.get("price", 0)
+                                if abs(old_price - target_sell) < 0.003:
+                                    need_update = False  # Già piazzato al prezzo ottimale
+
+                            if need_update and size >= 1.0:
+                                # Cancella eventuale vecchio ordine di vendita disallineato
+                                if existing_sell and existing_sell.get("order_id"):
+                                    try:
+                                        self.client.cancel(existing_sell["order_id"])
+                                    except Exception:
+                                        pass
+
+                                print(f"[{now_str}] 📌 MAKER EXIT DINAMICO (Urgenza {urgency:.2f}): {size:.1f} quote '{title[:22]}' ad ASK target {target_sell:.3f}$ (Floor: {floor:.3f}$, Passive: {passive:.3f}$)...")
                                 try:
                                     sell_args = OrderArgs(price=target_sell, size=round(size, 1), side=SELL, token_id=asset_id)
                                     s_res = self.client.post_order(self.client.create_order(sell_args), OrderType.GTC)
-                                    if s_res.get("success") or s_res.get("orderID"):
-                                        print(f"[+] ✅ ORDINE DI VENDITA CONFERMATO SUL BOOK!")
+                                    s_id = s_res.get("id") or s_res.get("orderID")
+                                    if s_res.get("success") or s_id:
+                                        print(f"[+] ✅ MAKER EXIT CONFERMATO SUL BOOK ({target_sell:.3f}$)")
+                                        self.active_sell_orders[asset_id] = {"order_id": s_id, "price": target_sell}
                                         open_sell_assets.add(asset_id)
                                 except Exception as se:
-                                    print(f"[!] Errore creazione vendita: {se}")
-
-                            if size >= 1.0 and avg_p > 0 and cur_p >= 0.01:
-                                pnl_pct = ((cur_p - avg_p) / avg_p) * 100.0
-                                cost = size * avg_p
-                                val = size * cur_p
-                                pnl_usd = val - cost
-
-                                if pnl_pct >= self.take_profit_pct:
-                                    print(f"[{now_str}] 🚀 AUTO TAKE-PROFIT: '{title[:25]}'! PnL: +{pnl_pct:.1f}% (+{pnl_usd:.2f}$)")
-                                    await self.execute_market_exit(asset_id, size, cur_p, "TAKE-PROFIT", title, pnl_usd, now_str)
-
-                                elif pnl_pct <= self.stop_loss_pct:
-                                    print(f"[{now_str}] 🛑 AUTO STOP-LOSS: '{title[:25]}'! PnL: {pnl_pct:.1f}% ({pnl_usd:.2f}$)")
-                                    await self.execute_market_exit(asset_id, size, cur_p, "STOP-LOSS", title, pnl_usd, now_str)
+                                    print(f"[!] Errore piazzamento Maker Exit: {se}")
             except Exception:
                 pass
 
@@ -336,6 +389,18 @@ class CompletePolymarketQuantBot:
         # =========================================================================
         avail_collateral = self.get_clob_collateral()
         busy_tokens = open_buy_assets.union(open_sell_assets)
+
+        # Circuit Breaker Globale: Daily Loss Kill-Switch (poly-maker style)
+        current_equity = avail_collateral + getattr(self, "cached_positions_val", 0.0)
+        daily_loss = current_equity - self.day_start_equity
+        if daily_loss <= -self.daily_loss_kill_usdc:
+            if self.market_regime != "HALTED":
+                print(f"[{now_str}] 🛑 GLOBAL RISK BREAKER: Perdita giornaliera ({daily_loss:.2f}$) ha superato il limite (-{self.daily_loss_kill_usdc:.2f}$). Passaggio in HALTED (Solo Exits & Merges)!")
+                self.market_regime = "HALTED"
+
+        # Se siamo in HALTED, non piazziamo nuovi ordini di acquisto per proteggere il capitale
+        if self.market_regime == "HALTED":
+            return
 
         # Motore Strict Rewards-Only: Quota SOLO mercati con Rewards e SEMPRE >= min_size
         if self.enable_as_mm and avail_collateral >= 3.0 and len(open_orders) < self.max_total_open_orders:
@@ -446,39 +511,7 @@ class CompletePolymarketQuantBot:
 
 
 
-    async def execute_market_exit(self, asset_id, size, cur_price, exit_type, title, pnl_usd, now_str):
-        try:
-            open_orders = self.client.get_open_orders()
-            matching_hashes = [o.get("id") or o.get("orderID") for o in open_orders if str(o.get("asset_id")) == str(asset_id)]
-            if matching_hashes:
-                self.client.cancel_orders(matching_hashes)
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"https://clob.polymarket.com/book?token_id={asset_id}", timeout=3) as b_resp:
-                    if b_resp.status == 200:
-                        book_data = await b_resp.json()
-                        bids = sorted(book_data.get("bids", []), key=lambda x: float(x["price"]), reverse=True)
-                        best_bid = float(bids[0]["price"]) if bids else cur_price
-                    else:
-                        best_bid = cur_price
-
-            best_bid = max(0.001, min(0.999, round(best_bid, 3)))
-            sell_args = OrderArgs(price=best_bid, size=round(size, 2), side=SELL, token_id=asset_id)
-            self.client.post_order(self.client.create_order(sell_args), OrderType.GTC)
-            print(f"[+] ✅ {exit_type} ESEGUITO A {best_bid:.3f}$! PnL: {pnl_usd:+.2f}$")
-            
-            self.trade_history.append({
-                "time": now_str,
-                "strategy": "GUARDIAN",
-                "action": f"{exit_type}",
-                "market": title,
-                "price": best_bid,
-                "shares": size,
-                "pnl": round(pnl_usd, 2)
-            })
-            self.active_real_orders = [o for o in self.active_real_orders if str(o.get("token_id")) != str(asset_id)]
-        except Exception as e:
-            print(f"[!] Errore {exit_type}: {e}")
+    # Nota: Le uscite sono gestite al 100% come Maker Exits passivi in _maybe_exit (Zero market dumps)
 
     def cancel_all_orders(self):
         try:
