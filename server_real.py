@@ -95,8 +95,8 @@ class CompletePolymarketQuantBot:
         self.take_profit_pct = 15.0
         self.stop_loss_pct = -18.0
         self.position_acquired_ts = {}       # asset_id -> timestamp primo acquisto
-        self.day_start_equity = 31.87         # baseline per il circuit breaker giornaliero
-        self.daily_loss_kill_usdc = 3.00      # Limite massimo perdita giornaliera prima di HALT
+        self.day_start_equity = None         # Calibrata dinamicamente all'avvio sul patrimonio reale
+        self.daily_loss_kill_usdc = 4.00      # Limite massimo perdita giornaliera prima di HALT
         self.market_regime = "NORMAL"         # NORMAL, REDUCE_ONLY, HALTED
         self.active_sell_orders = {}          # asset_id -> {"order_id": str, "price": float}
 
