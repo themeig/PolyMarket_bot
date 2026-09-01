@@ -288,11 +288,27 @@ class CompletePolymarketQuantBot:
                         held_opp_tokens.add(str(opp_asset))
                         # Se il lato opposto NON ha ancora un ordine BUY attivo, piazzalo per completare la coppia da fondere a 1.00$
                         if str(opp_asset) not in open_buy_assets:
-                            target_opp_p = round(min(0.99, max(0.01, 1.00 - avg_p - 0.02)), 2)
+                            opp_bid = 0.45
+                            opp_ask = 0.55
+                            max_sp_c = 4.5
+                            try:
+                                book_opp = self.client.get_order_book(str(opp_asset))
+                                b_list = book_opp.get("bids", []) if isinstance(book_opp, dict) else getattr(book_opp, "bids", [])
+                                a_list = book_opp.get("asks", []) if isinstance(book_opp, dict) else getattr(book_opp, "asks", [])
+                                if b_list:
+                                    opp_bid = float(b_list[0].get("price") if isinstance(b_list[0], dict) else b_list[0].price)
+                                if a_list:
+                                    opp_ask = float(a_list[0].get("price") if isinstance(a_list[0], dict) else a_list[0].price)
+                            except Exception:
+                                pass
+                            
+                            mid_opp = (opp_bid + opp_ask) / 2.0 if (opp_bid > 0.01 and opp_ask < 0.99) else (1.0 - avg_p)
+                            half_sp_dyn = (max_sp_c / 100.0) / 2.0
+                            target_opp_p = max(0.01, min(0.99, round(min(1.00 - avg_p - 0.01, mid_opp - half_sp_dyn), 2)))
                             needed_cost = round(size * target_opp_p, 2)
                             avail_c = self.get_clob_collateral()
                             if avail_c >= needed_cost:
-                                print(f"[{now_str}] 🧩 COMPLETAMENTO COPPIA PER MERGE: BUY {size:.0f} quote {opp_outcome} @ {target_opp_p:.2f}$ (Spesa: {needed_cost:.2f}$ | Merge Target: 1.00$)...")
+                                print(f"[{now_str}] 🧩 COMPLETAMENTO COPPIA PER MERGE: BUY {size:.0f} quote {opp_outcome} @ {target_opp_p:.2f}$ (Mid Dinamico: {mid_opp:.2f}$ | Spesa: {needed_cost:.2f}$ | Merge Target: 1.00$)...")
                                 try:
                                     opp_args = OrderArgsV2(token_id=str(opp_asset), price=target_opp_p, size=size, side="BUY")
                                     opp_res = self.client.post_order(self.client.create_order(opp_args), OrderType.GTC)
