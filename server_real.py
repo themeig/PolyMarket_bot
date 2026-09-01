@@ -269,8 +269,7 @@ class CompletePolymarketQuantBot:
                 except Exception:
                     pass
 
-                # Gestione Copertura Inventario
-                avail_collateral_temp = self.get_clob_collateral()
+                # Gestione Copertura Inventario (Esclusivamente Limit SELL passivo a profitto per liberare USDC)
                 for pos in positions:
                     size = float(pos.get("size", 0) or 0)
                     cur_val = float(pos.get("currentValue", 0) or 0)
@@ -278,28 +277,10 @@ class CompletePolymarketQuantBot:
                         continue
                     
                     asset_id = str(pos.get("asset"))
-                    opp_asset = pos.get("oppositeAsset")
-                    opp_outcome = pos.get("oppositeOutcome", "YES")
                     avg_p = float(pos.get("avgPrice", 0) or 0)
                     title = pos.get("title", "")
                     
-                    # 1. Se possiamo completare la coppia per fare Merge:
-                    if opp_asset and str(opp_asset) not in open_buy_assets:
-                        target_opp_p = round(min(0.99, max(0.01, 1.00 - avg_p - 0.02)), 2)
-                        needed_cost = round(size * target_opp_p, 2)
-                        if avail_collateral_temp >= needed_cost:
-                            print(f"[{now_str}] 🧩 COMPLETAMENTO COPPIA PER MERGE: BUY {size:.0f} {opp_outcome} @ {target_opp_p:.2f}$ (Spesa: {needed_cost:.2f}$)...")
-                            try:
-                                opp_args = OrderArgsV2(token_id=str(opp_asset), price=target_opp_p, size=size, side="BUY")
-                                opp_res = self.client.post_order(self.client.create_order(opp_args), OrderType.GTC)
-                                if opp_res.get("success") or opp_res.get("orderID"):
-                                    open_buy_assets.add(str(opp_asset))
-                                    avail_collateral_temp -= needed_cost
-                                    continue
-                            except Exception:
-                                pass
-                    
-                    # 2. Se non abbiamo fondi per comprare l'opposto, piazzi Limit SELL passivo a profitto (+5%)
+                    # Se abbiamo quote in portafoglio, piazziamo Limit SELL passivo a profitto (+5%) per monetizzare
                     if asset_id not in open_sell_assets:
                         sell_target_p = round(min(0.99, max(0.01, avg_p * 1.05)), 2)
                         print(f"[{now_str}] 📌 COPERTURA PASSIVA A PROFITTO: SELL {size:.0f} quote {pos.get('outcome')} '{title[:20]}' @ {sell_target_p:.2f}$ (Carico: {avg_p:.3f}$)...")
