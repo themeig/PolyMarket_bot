@@ -403,12 +403,16 @@ class CompletePolymarketQuantBot:
             return
 
         # Motore Strict Rewards-Only: Quota SOLO mercati con Rewards e SEMPRE >= min_size
-        if self.enable_as_mm and avail_collateral >= 3.0 and len(open_orders) < self.max_total_open_orders:
+        if self.enable_as_mm:
             # 1. Filtra rigorosamente solo mercati con Rewards attive e min_size definita
             reward_candidates = [
                 c for c in self.rewards_screener 
                 if float(c.get("rewards_min_size", 0) or 0) > 0 and float(c.get("rewards_daily", 0) or 0) > 0
             ]
+
+            # 2. RICONCILIAZIONE DINAMICA ORDINI ESISTENTI (Poly-Maker Order Reconciler)
+            # Se gli ordini attivi si sono allontanati dal midpoint / usciti dallo spread target, cancellali e riposizionali
+            await self.reconcile_active_rewards_orders(open_orders, reward_candidates, now_str)
 
             # Ordina per convenienza: privilegia mercati con min_size accessibile rispetto al collaterale disponibile
             reward_candidates = sorted(
@@ -417,26 +421,136 @@ class CompletePolymarketQuantBot:
                 reverse=True
             )
 
-            for cand in reward_candidates:
-                token_id_yes = str(cand.get("token_id", ""))
-                tokens_raw = cand.get("clob_token_ids", [])
-                if isinstance(tokens_raw, list) and len(tokens_raw) >= 2:
-                    token_id_yes = str(tokens_raw[0])
-                    token_id_no = str(tokens_raw[1])
-                else:
+            if avail_collateral >= 3.0 and len(open_orders) < self.max_total_open_orders:
+                for cand in reward_candidates:
+                    token_id_yes = str(cand.get("token_id", ""))
+                    tokens_raw = cand.get("clob_token_ids", [])
+                    if isinstance(tokens_raw, list) and len(tokens_raw) >= 2:
+                        token_id_yes = str(tokens_raw[0])
+                        token_id_no = str(tokens_raw[1])
+                    else:
+                        continue
+
+                    if token_id_yes in busy_tokens or token_id_no in busy_tokens:
+                        continue
+
+                    m_id = str(cand.get("id", token_id_yes))
+                    yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
+                    yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
+                    r_min_size = float(cand.get("rewards_min_size", 0) or 0)
+                    r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
+                    r_daily = float(cand.get("rewards_daily", 0) or 0)
+
+                    # Calcolo Avellaneda-Stoikov
+                    as_res = self.as_engine.compute_quotes(
+                        market_id=m_id,
+                        yes_best_bid=yes_bid_live,
+                        yes_best_ask=yes_ask_live,
+                        no_best_bid=round(1.0 - yes_ask_live, 3) if yes_ask_live else None,
+                        no_best_ask=round(1.0 - yes_bid_live, 3) if yes_bid_live else None
+                    )
+
+                    # Clamping dello spread dentro la banda ufficiale delle Rewards
+                    if r_max_spread_c > 0:
+                        max_half_spread = (r_max_spread_c / 100.0) / 2.0
+                        if as_res.half_spread > max_half_spread:
+                            as_res.half_spread = max_half_spread
+                            as_res.yes_bid_price = round(as_res.reservation_price - max_half_spread, 3)
+                            as_res.no_bid_price = round((1.0 - as_res.reservation_price) - max_half_spread, 3)
+
+                    self.last_as_quotes[m_id] = {
+                        "market": cand.get("Mercato", ""),
+                        "fair_value": as_res.fair_value,
+                        "r": as_res.reservation_price,
+                        "delta": as_res.half_spread,
+                        "vol": as_res.volatility,
+                        "yes_bid": as_res.yes_bid_price,
+                        "no_bid": as_res.no_bid_price,
+                        "expected_edge": as_res.expected_edge,
+                        "rewards_daily": r_daily,
+                        "rewards_min_size": r_min_size
+                    }
+
+                    # REGOLA FERREA: Dimensionamento SEMPRE >= rewards_min_size (Nessun ordine sotto-soglia!)
+                    size_yes = r_min_size
+                    size_no = r_min_size
+
+                    cost_yes = round(size_yes * as_res.yes_bid_price, 2)
+                    cost_no = round(size_no * as_res.no_bid_price, 2)
+                    total_required_cost = cost_yes + cost_no
+
+                    # Verifica collaterale: se il saldo non copre la min_size, NON piazza ordini parziali
+                    if avail_collateral >= total_required_cost and as_res.expected_edge >= 0.002:
+                        try:
+                            print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS QUALIFICATO ({r_daily:.0f}$/gg) su '{cand['Mercato'][:20]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) | Spesa: {total_required_cost:.2f}$ | Spread: entro {r_max_spread_c}c")
+                            
+                            # 1. Crea entrambi gli ordini
+                            args_yes = OrderArgs(price=round(as_res.yes_bid_price, 3), size=size_yes, side=BUY, token_id=token_id_yes)
+                            args_no = OrderArgs(price=round(as_res.no_bid_price, 3), size=size_no, side=BUY, token_id=token_id_no)
+
+                            res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
+                            yes_id = res_yes.get("id") or res_yes.get("orderID") if (res_yes.get("success") or res_yes.get("orderID")) else None
+
+                            try:
+                                res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
+                                no_id = res_no.get("id") or res_no.get("orderID") if (res_no.get("success") or res_no.get("orderID")) else None
+                            except Exception as no_err:
+                                res_no = {"error": str(no_err)}
+                                no_id = None
+
+                            # GARANZIA ATOMICA: Se uno dei due fallisce, cancella subito l'altro (Zero Ordini Orfani!)
+                            if yes_id and not no_id:
+                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito. Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani a un solo lato!")
+                                self.client.cancel(yes_id)
+                            elif no_id and not yes_id:
+                                print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito. Cancello subito NO ({no_id[:10]}...)!")
+                                self.client.cancel(no_id)
+                            elif yes_id and no_id:
+                                print(f"[+] ✅ COPPIA ATOMICA DUAL-BIDDING CONFERMATA AL 100% SUL BOOK (Qualificata per Merge + Rewards)!")
+                                busy_tokens.add(token_id_yes)
+                                busy_tokens.add(token_id_no)
+                                avail_collateral -= total_required_cost
+                                break
+                        except Exception as as_err:
+                            print(f"[!] Errore piazzamento Rewards: {as_err}")
+
+
+
+    async def reconcile_active_rewards_orders(self, open_orders, reward_candidates, now_str):
+        """
+        Poly-Maker Order Reconciler:
+        Controlla se gli ordini BUY attivi sono ancora dentro lo spread target ufficiale delle Rewards.
+        Se il mercato oscilla e l'ordine finisce fuori banda (> rewards_max_spread o > 2 ticks dal target),
+        cancella la vecchia coppia e la riposiziona al prezzo ottimale per massimizzare il punteggio S((v-s)/v)^2.
+        """
+        if not open_orders:
+            return
+
+        buy_orders_by_token = {}
+        for o in open_orders:
+            if o.get("side") == "BUY":
+                aid = str(o.get("asset_id"))
+                buy_orders_by_token[aid] = o
+
+        for cand in reward_candidates:
+            tokens_raw = cand.get("clob_token_ids", [])
+            if not isinstance(tokens_raw, list) or len(tokens_raw) < 2:
+                continue
+            token_yes = str(tokens_raw[0])
+            token_no = str(tokens_raw[1])
+
+            order_yes = buy_orders_by_token.get(token_yes)
+            order_no = buy_orders_by_token.get(token_no)
+
+            if order_yes or order_no:
+                r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
+                if r_max_spread_c <= 0:
                     continue
 
-                if token_id_yes in busy_tokens or token_id_no in busy_tokens:
-                    continue
-
-                m_id = str(cand.get("id", token_id_yes))
+                m_id = str(cand.get("id", token_yes))
                 yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
                 yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
-                r_min_size = float(cand.get("rewards_min_size", 0) or 0)
-                r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
-                r_daily = float(cand.get("rewards_daily", 0) or 0)
-
-                # Calcolo Avellaneda-Stoikov
+                
                 as_res = self.as_engine.compute_quotes(
                     market_id=m_id,
                     yes_best_bid=yes_bid_live,
@@ -444,72 +558,33 @@ class CompletePolymarketQuantBot:
                     no_best_bid=round(1.0 - yes_ask_live, 3) if yes_ask_live else None,
                     no_best_ask=round(1.0 - yes_bid_live, 3) if yes_bid_live else None
                 )
+                max_half_spread = (r_max_spread_c / 100.0) / 2.0
+                ideal_yes = round(as_res.reservation_price - max_half_spread, 3)
+                ideal_no = round((1.0 - as_res.reservation_price) - max_half_spread, 3)
 
-                # Clamping dello spread dentro la banda ufficiale delle Rewards
-                if r_max_spread_c > 0:
-                    max_half_spread = (r_max_spread_c / 100.0) / 2.0
-                    if as_res.half_spread > max_half_spread:
-                        as_res.half_spread = max_half_spread
-                        as_res.yes_bid_price = round(as_res.reservation_price - max_half_spread, 3)
-                        as_res.no_bid_price = round((1.0 - as_res.reservation_price) - max_half_spread, 3)
+                # Verifica tolleranza (reprice_ticks = 2 ticks = 0.004$)
+                reprice_needed = False
+                if order_yes:
+                    cur_p = float(order_yes.get("price", 0))
+                    if abs(cur_p - ideal_yes) > 0.004:
+                        reprice_needed = True
+                if order_no:
+                    cur_p = float(order_no.get("price", 0))
+                    if abs(cur_p - ideal_no) > 0.004:
+                        reprice_needed = True
 
-                self.last_as_quotes[m_id] = {
-                    "market": cand.get("Mercato", ""),
-                    "fair_value": as_res.fair_value,
-                    "r": as_res.reservation_price,
-                    "delta": as_res.half_spread,
-                    "vol": as_res.volatility,
-                    "yes_bid": as_res.yes_bid_price,
-                    "no_bid": as_res.no_bid_price,
-                    "expected_edge": as_res.expected_edge,
-                    "rewards_daily": r_daily,
-                    "rewards_min_size": r_min_size
-                }
-
-                # REGOLA FERREA: Dimensionamento SEMPRE >= rewards_min_size (Nessun ordine sotto-soglia!)
-                size_yes = r_min_size
-                size_no = r_min_size
-
-                cost_yes = round(size_yes * as_res.yes_bid_price, 2)
-                cost_no = round(size_no * as_res.no_bid_price, 2)
-                total_required_cost = cost_yes + cost_no
-
-                # Verifica collaterale: se il saldo non copre la min_size, NON piazza ordini parziali
-                if avail_collateral >= total_required_cost and as_res.expected_edge >= 0.002:
-                    try:
-                        print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS QUALIFICATO ({r_daily:.0f}$/gg) su '{cand['Mercato'][:20]}': BUY YES @ {as_res.yes_bid_price:.3f}$ ({size_yes}q) + BUY NO @ {as_res.no_bid_price:.3f}$ ({size_no}q) | Spesa: {total_required_cost:.2f}$ | Spread: entro {r_max_spread_c}c")
-                        
-                        # 1. Crea entrambi gli ordini
-                        args_yes = OrderArgs(price=round(as_res.yes_bid_price, 3), size=size_yes, side=BUY, token_id=token_id_yes)
-                        args_no = OrderArgs(price=round(as_res.no_bid_price, 3), size=size_no, side=BUY, token_id=token_id_no)
-
-                        res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
-                        yes_id = res_yes.get("id") or res_yes.get("orderID") if (res_yes.get("success") or res_yes.get("orderID")) else None
-
+                if reprice_needed:
+                    print(f"[{now_str}] 🔄 RECONCILER DINAMICO: Ordini su '{cand.get('Mercato', '')[:20]}' fuori spread ottimale! Riconciliazione in corso...")
+                    if order_yes:
                         try:
-                            res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
-                            no_id = res_no.get("id") or res_no.get("orderID") if (res_no.get("success") or res_no.get("orderID")) else None
-                        except Exception as no_err:
-                            res_no = {"error": str(no_err)}
-                            no_id = None
-
-                        # GARANZIA ATOMICA: Se uno dei due fallisce, cancella subito l'altro (Zero Ordini Orfani!)
-                        if yes_id and not no_id:
-                            print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito. Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani a un solo lato!")
-                            self.client.cancel(yes_id)
-                        elif no_id and not yes_id:
-                            print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito. Cancello subito NO ({no_id[:10]}...)!")
-                            self.client.cancel(no_id)
-                        elif yes_id and no_id:
-                            print(f"[+] ✅ COPPIA ATOMICA DUAL-BIDDING CONFERMATA AL 100% SUL BOOK (Qualificata per Merge + Rewards)!")
-                            busy_tokens.add(token_id_yes)
-                            busy_tokens.add(token_id_no)
-                            avail_collateral -= total_required_cost
-                            break
-                    except Exception as as_err:
-                        print(f"[!] Errore piazzamento Rewards: {as_err}")
-
-
+                            self.client.cancel(order_yes.get("id") or order_yes.get("orderID"))
+                        except Exception:
+                            pass
+                    if order_no:
+                        try:
+                            self.client.cancel(order_no.get("id") or order_no.get("orderID"))
+                        except Exception:
+                            pass
 
     # Nota: Le uscite sono gestite al 100% come Maker Exits passivi in _maybe_exit (Zero market dumps)
 
