@@ -990,6 +990,84 @@ async def handle_reset_pnl(request):
     return web.json_response({"success": True, "message": "PnL azzerato al valore corrente"})
 
 # =========================================================================
+# POLYMARKET STATUS SENTINEL & CIRCUIT BREAKER
+# =========================================================================
+maintenance_state = {
+    "is_maintenance": False,
+    "page_status": "UP",
+    "reason": "",
+    "last_checked": 0,
+    "components": []
+}
+
+async def polymarket_status_sentinel_loop():
+    """Background sentinel polling Polymarket status every 10 seconds."""
+    import httpx
+    url_summary = "https://status.polymarket.com/v3/summary.json"
+    url_components = "https://status.polymarket.com/v3/components.json"
+    critical_components = {
+        "Trading API (CLOB)",
+        "Websocket (RTDS)",
+        "Clob Websocket",
+        "Markets and Position data",
+        "Predictions",
+        "Polymarket Web app",
+        "On-chain settlement (Polygon RPC)",
+    }
+    
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                r_sum = await client.get(url_summary)
+                r_comp = await client.get(url_components)
+                
+                is_down = False
+                reason = ""
+                page_status = "UP"
+                
+                if r_sum.status_code == 200:
+                    sum_data = r_sum.json()
+                    page_status = sum_data.get("page", {}).get("status", "UP")
+                    if page_status.upper() not in ("UP", "OPERATIONAL"):
+                        is_down = True
+                        reason = f"Polymarket Status: {page_status}"
+                
+                comp_list = []
+                if r_comp.status_code == 200:
+                    comp_data = r_comp.json()
+                    for comp in comp_data.get("components", []):
+                        cname = comp.get("name", "").strip()
+                        cstatus = comp.get("status", "").upper()
+                        comp_list.append({"name": cname, "status": cstatus})
+                        if cname in critical_components and cstatus not in ("OPERATIONAL", ""):
+                            is_down = True
+                            reason = f"Componente '{cname}' is {cstatus}"
+                
+                maintenance_state["page_status"] = page_status
+                maintenance_state["components"] = comp_list
+                maintenance_state["last_checked"] = time.time()
+
+                if is_down:
+                    if not maintenance_state["is_maintenance"]:
+                        maintenance_state["is_maintenance"] = True
+                        maintenance_state["reason"] = reason
+                        print(f"🚨 [CIRCUIT BREAKER] RILEVATA MANUTENZIONE POLYMARKET: {reason}! Cancellazione ordini di emergenza...")
+                        try:
+                            engine.cancel_all_orders()
+                        except Exception as e:
+                            print(f"Errore cancellazione ordini emergenza: {e}")
+                else:
+                    if maintenance_state["is_maintenance"]:
+                        maintenance_state["is_maintenance"] = False
+                        maintenance_state["reason"] = ""
+                        print("🟢 [CIRCUIT BREAKER] Polymarket è tornato OPERATIONAL al 100%.")
+
+        except Exception as e:
+            pass
+            
+        await asyncio.sleep(10.0)
+
+# =========================================================================
 # ENDPOINTS DEDICATI A POLY-MAKER
 # =========================================================================
 async def handle_polymaker_page(request):
@@ -1033,7 +1111,7 @@ async def handle_polymaker_status(request):
 
         fv = 0.53
         toxicity = 0.0
-        regime = "QUIET"
+        regime = "MAINTENANCE" if maintenance_state["is_maintenance"] else "QUIET"
         inventory = 0.0
 
         markets_toml_path = os.path.join(os.path.dirname(__file__), "external_repos", "poly-maker", "config", "markets.toml")
@@ -1159,6 +1237,9 @@ async def handle_polymaker_doctor(request):
         "user_ws": "OK (connected)"
     })
 
+async def handle_polymarket_system_status(request):
+    return web.json_response(maintenance_state)
+
 def create_app():
     app = web.Application()
     app.router.add_get("/", handle_index)
@@ -1171,6 +1252,7 @@ def create_app():
     app.router.add_post("/api/polymaker/set_market", handle_polymaker_set_market)
     app.router.add_post("/api/polymaker/cancel_all", handle_polymaker_cancel_all)
     app.router.add_get("/api/polymaker/doctor", handle_polymaker_doctor)
+    app.router.add_get("/api/polymarket/system_status", handle_polymarket_system_status)
     app.router.add_get("/api/simulation/status", handle_simulation_status)
     app.router.add_post("/api/simulation/toggle", handle_simulation_toggle)
     app.router.add_post("/api/simulation/reset", handle_simulation_reset)
@@ -1191,11 +1273,13 @@ def create_app():
 async def start_background_tasks(app):
     app['trading_task'] = asyncio.create_task(engine.trading_loop())
     app['simulation_task'] = asyncio.create_task(sim_engine.simulation_loop())
+    app['sentinel_task'] = asyncio.create_task(polymarket_status_sentinel_loop())
 
 async def cleanup_background_tasks(app):
     app['trading_task'].cancel()
     app['simulation_task'].cancel()
-    await asyncio.gather(app['trading_task'], app['simulation_task'], return_exceptions=True)
+    app['sentinel_task'].cancel()
+    await asyncio.gather(app['trading_task'], app['simulation_task'], app['sentinel_task'], return_exceptions=True)
 
 if __name__ == "__main__":
     app = create_app()

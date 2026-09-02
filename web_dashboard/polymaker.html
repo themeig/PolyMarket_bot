@@ -158,6 +158,20 @@
             </div>
         </div>
 
+        <!-- POLYMARKET STATUS & MAINTENANCE BANNER -->
+        <div id="maintenance-banner" class="hidden p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-amber-300">
+            <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-400">
+                    <i data-lucide="alert-triangle" class="w-5 h-5 animate-pulse"></i>
+                </div>
+                <div>
+                    <h4 class="text-sm font-black text-amber-200">CIRCUIT BREAKER: POLYMARKET IN MANUTENZIONE / DEGRADATO</h4>
+                    <p id="maintenance-banner-reason" class="text-xs text-amber-300/80">Il bot ha ritirato tutti gli ordini dal book ed è in modalità di protezione passiva fino al ripristino.</p>
+                </div>
+            </div>
+            <span class="px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-500/40 text-xs font-bold text-amber-300">TRADING SOSPESO</span>
+        </div>
+
         <!-- 4 MICROSTRUCTURE METRIC CARDS -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <!-- FAIR VALUE -->
@@ -427,8 +441,35 @@
             updateDashboard();
         }
 
-        setInterval(updateDashboard, 2000);
+        async function checkSystemStatus() {
+            try {
+                const res = await fetch('/api/polymarket/system_status');
+                if (res.ok) {
+                    const data = await res.json();
+                    const banner = document.getElementById('maintenance-banner');
+                    if (data.is_maintenance) {
+                        banner.classList.remove('hidden');
+                        document.getElementById('maintenance-banner-reason').innerText = `Rilevato stato non operativo: ${data.reason || 'Manutenzione in corso'}. Ordini rimossi per sicurezza.`;
+                        const badge = document.getElementById('engine-badge');
+                        if (badge) {
+                            badge.className = "px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center gap-1";
+                            badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span> MANUTENZIONE`;
+                        }
+                    } else {
+                        banner.classList.add('hidden');
+                    }
+                }
+            } catch (e) {
+                console.error("Errore system status:", e);
+            }
+        }
+
+        setInterval(() => {
+            updateDashboard();
+            checkSystemStatus();
+        }, 2000);
         updateDashboard();
+        checkSystemStatus();
         refreshCatalog();
     </script>
 </body>
