@@ -1285,4 +1285,4 @@ if __name__ == "__main__":
     app = create_app()
     app.on_startup.append(start_background_tasks)
     app.on_cleanup.append(cleanup_background_tasks)
-    web.run_app(app, host="127.0.0.1", port=8080)
+    web.run_app(app, host="0.0.0.0", port=8080)
