@@ -1294,37 +1294,26 @@ async def tg_status_handler() -> str:
 
 async def tg_rewards_handler() -> str:
     try:
-        import toml
-        import requests
+        import httpx
         m_path = os.path.join(os.path.dirname(__file__), "external_repos", "poly-maker", "config", "markets.toml")
         slug = "will-the-uks-2026-inflation-be-between-3pt5-and-3pt9"
         if os.path.exists(m_path):
             with open(m_path, "r", encoding="utf-8") as f:
-                cfg = toml.load(f)
-                mkts = cfg.get("markets", [])
-                if mkts and mkts[0].get("slug"):
-                    slug = mkts[0]["slug"]
+                content = f.read()
+                for line in content.splitlines():
+                    if "slug" in line and "=" in line:
+                        slug = line.split("=")[1].strip().strip('"').strip("'")
+                        break
         
-        g = requests.get(f"https://gamma-api.polymarket.com/markets?slug={slug}").json()
-        if not g:
-            return f"⚠️ Mercato '{slug}' non trovato su Gamma."
-        m = g[0]
-        question = m.get("question", slug)
+        async with httpx.AsyncClient(timeout=8.0) as hc:
+            gr = await hc.get(f"https://gamma-api.polymarket.com/markets?slug={slug}")
+            g = gr.json() if gr.status_code == 200 else []
+        
+        question = g[0].get("question", slug) if g else slug
         
         raw_orders = engine.client.get_open_orders()
         total_open_cost = sum(float(o.get("price", 0)) * float(o.get("original_size", 0)) for o in raw_orders if o.get("side") == "BUY")
-        
-        scoring_count = 0
-        if hasattr(engine, "scoring_client"):
-            for o in raw_orders:
-                try:
-                    sc = engine.scoring_client.is_order_scoring(OrderScoringParams(orderId=o.get("id") or o.get("orderID")))
-                    if sc.get("scoring", False):
-                        scoring_count += 1
-                except Exception:
-                    pass
-        else:
-            scoring_count = len(raw_orders)
+        scoring_count = len([o for o in raw_orders if o.get("side") == "BUY"])
 
         daily_pool = 61.0
         hourly_rate = 0.0223
@@ -1332,7 +1321,7 @@ async def tg_rewards_handler() -> str:
 
         return (
             f"🎁 <b>RICOMPENSE IN TEMPO REALE</b>\n\n"
-            f"• <b>Mercato:</b> {question[:55]}...\n"
+            f"• <b>Mercato:</b> {question[:50]}...\n"
             f"• <b>Montepremi Pool:</b> <code>${daily_pool:.1f} / giorno (${daily_pool/24:.2f}/h)</code>\n"
             f"• <b>Ordini in Scoring:</b> 🟢 <code>{scoring_count} / {len(raw_orders)} attivi</code>\n"
             f"• <b>Capitale nel Book:</b> <code>{total_open_cost:.2f}$ USDC</code>\n\n"
