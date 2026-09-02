@@ -122,7 +122,7 @@ class CompletePolymarketQuantBot:
 
         self.killswitch_loss_limit = 3.00
 
-        self.running = True
+        self.running = False  # Set to False: poly-maker is the authoritative quoting engine
         self.killswitch_triggered = False
         self.active_real_orders = []
         self.trade_history = []
