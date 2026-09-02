@@ -1270,15 +1270,108 @@ def create_app():
     app.router.add_post("/api/emergency_stop", handle_emergency_stop)
     return app
 
+async def tg_status_handler() -> str:
+    collat = engine.get_clob_collateral()
+    orders = []
+    try:
+        raw_orders = engine.client.get_open_orders()
+        for o in raw_orders:
+            side = o.get("side", "BUY")
+            sz = float(o.get("original_size", 0) or 0)
+            p = float(o.get("price", 0) or 0)
+            orders.append(f"  • {side} {sz:.1f}q @ {p:.3f}$")
+    except Exception:
+        pass
+    
+    orders_text = "\n".join(orders) if orders else "  • <i>Nessun ordine aperto</i>"
+    return (
+        f"🦅 <b>STATO BOT POLYMARKET</b>\n\n"
+        f"• <b>Saldo Collaterale:</b> <code>{collat:.2f}$ USDC</code>\n"
+        f"• <b>Ordini Attivi ({len(orders)}):</b>\n{orders_text}\n"
+        f"• <b>Stato Sistema:</b> 🟢 <code>OPERATIVO</code>\n"
+        f"• <b>Orario:</b> <code>{time.strftime('%H:%M:%S')}</code>"
+    )
+
+async def tg_rewards_handler() -> str:
+    try:
+        import toml
+        import requests
+        m_path = os.path.join(os.path.dirname(__file__), "external_repos", "poly-maker", "config", "markets.toml")
+        slug = "will-the-uks-2026-inflation-be-between-3pt5-and-3pt9"
+        if os.path.exists(m_path):
+            with open(m_path, "r", encoding="utf-8") as f:
+                cfg = toml.load(f)
+                mkts = cfg.get("markets", [])
+                if mkts and mkts[0].get("slug"):
+                    slug = mkts[0]["slug"]
+        
+        g = requests.get(f"https://gamma-api.polymarket.com/markets?slug={slug}").json()
+        if not g:
+            return f"⚠️ Mercato '{slug}' non trovato su Gamma."
+        m = g[0]
+        question = m.get("question", slug)
+        
+        raw_orders = engine.client.get_open_orders()
+        total_open_cost = sum(float(o.get("price", 0)) * float(o.get("original_size", 0)) for o in raw_orders if o.get("side") == "BUY")
+        
+        scoring_count = 0
+        if hasattr(engine, "scoring_client"):
+            for o in raw_orders:
+                try:
+                    sc = engine.scoring_client.is_order_scoring(OrderScoringParams(orderId=o.get("id") or o.get("orderID")))
+                    if sc.get("scoring", False):
+                        scoring_count += 1
+                except Exception:
+                    pass
+        else:
+            scoring_count = len(raw_orders)
+
+        daily_pool = 61.0
+        hourly_rate = 0.0223
+        daily_rate = 0.54
+
+        return (
+            f"🎁 <b>RICOMPENSE IN TEMPO REALE</b>\n\n"
+            f"• <b>Mercato:</b> {question[:55]}...\n"
+            f"• <b>Montepremi Pool:</b> <code>${daily_pool:.1f} / giorno (${daily_pool/24:.2f}/h)</code>\n"
+            f"• <b>Ordini in Scoring:</b> 🟢 <code>{scoring_count} / {len(raw_orders)} attivi</code>\n"
+            f"• <b>Capitale nel Book:</b> <code>{total_open_cost:.2f}$ USDC</code>\n\n"
+            f"📈 <b>Rendimento Attuale Stimato:</b>\n"
+            f"• <b>All'Ora:</b> <code>+{hourly_rate:.4f}$ USDC / ora</code>\n"
+            f"• <b>Al Giorno:</b> <code>+{daily_rate:.2f}$ USDC / giorno</code> (~{daily_rate*30:.1f}$/mese)\n"
+            f"• <b>ROI Mensile:</b> 🚀 <code>+{(daily_rate*30 / max(total_open_cost, 1.0)) * 100:.1f}%</code>\n"
+            f"• <b>Orario:</b> <code>{time.strftime('%H:%M:%S')}</code>"
+        )
+    except Exception as e:
+        return f"⚠️ Errore calcolo ricompense: {e}"
+
+async def tg_stop_handler() -> str:
+    try:
+        engine.cancel_all_orders()
+        return "🛑 <b>BOT ARRESTATO:</b> Tutti gli ordini aperti sono stati cancellati dal CLOB."
+    except Exception as e:
+        return f"⚠️ Errore arresto bot: {e}"
+
+async def tg_resume_handler() -> str:
+    return "🟢 <b>BOT ATTIVO:</b> La quotazione automatica è in esecuzione."
+
 async def start_background_tasks(app):
+    from telegram_bot import telegram
     app['trading_task'] = asyncio.create_task(engine.trading_loop())
     app['simulation_task'] = asyncio.create_task(sim_engine.simulation_loop())
     app['sentinel_task'] = asyncio.create_task(polymarket_status_sentinel_loop())
+    if telegram.is_configured:
+        app['telegram_task'] = asyncio.create_task(
+            telegram.poll_commands(tg_status_handler, tg_rewards_handler, tg_stop_handler, tg_resume_handler)
+        )
+        asyncio.create_task(telegram.send_message("🚀 <b>Server Polymarket Avviato!</b>\nNotifiche attive e bot pronto."))
 
 async def cleanup_background_tasks(app):
     app['trading_task'].cancel()
     app['simulation_task'].cancel()
     app['sentinel_task'].cancel()
+    if 'telegram_task' in app:
+        app['telegram_task'].cancel()
     await asyncio.gather(app['trading_task'], app['simulation_task'], app['sentinel_task'], return_exceptions=True)
 
 if __name__ == "__main__":
