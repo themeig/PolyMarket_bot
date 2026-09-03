@@ -25,7 +25,8 @@ echo Aggiornamento pip e installazione librerie necessarie...
 echo.
 
 python -m pip install --upgrade pip
-python -m pip install py-clob-client web3 aiohttp python-dotenv tabulate requests
+python -m pip install -r requirements.txt
+
 
 if errorlevel 1 (
     color 0C

@@ -107,12 +107,15 @@ class TelegramNotifier:
     async def poll_commands(self, on_status_request: Callable[[], Coroutine[Any, Any, str]],
                             on_rewards_request: Callable[[], Coroutine[Any, Any, str]],
                             on_stop_request: Callable[[], Coroutine[Any, Any, str]],
-                            on_resume_request: Callable[[], Coroutine[Any, Any, str]]) -> None:
-        """Background listener for interactive Telegram commands (/status, /rewards, /stop, /resume)."""
+                            on_resume_request: Callable[[], Coroutine[Any, Any, str]],
+                            on_target_request: Callable[[str], Coroutine[Any, Any, str]] | None = None,
+                            on_info_request: Callable[[], Coroutine[Any, Any, str]] | None = None,
+                            on_accumulated_request: Callable[[], Coroutine[Any, Any, str]] | None = None) -> None:
+        """Background listener for interactive Telegram commands."""
         if not self.is_configured:
             return
 
-        print("[Telegram Bot] In ascolto per comandi interattivi (/status, /rewards, /stop, /resume)...")
+        print("[Telegram Bot] In ascolto per comandi interattivi (/status, /rewards, /accumulated, /info, /target, /rischio, /stop, /resume)...")
         while True:
             try:
                 url = f"{self.base_url}/getUpdates"
@@ -125,40 +128,65 @@ class TelegramNotifier:
                             self._last_offset = update.get("update_id", self._last_offset)
                             msg = update.get("message", {})
                             chat_id = str(msg.get("chat", {}).get("id", ""))
-                            text = msg.get("text", "").strip().lower()
+                            raw_text = msg.get("text", "").strip()
+                            text = raw_text.lower()
+                            parts = text.split()
+                            cmd = parts[0].split("@")[0] if parts else ""
 
-                            if self.chat_id and chat_id != str(self.chat_id):
+                            if not raw_text:
                                 continue
 
-                            if text in ("/status", "/stats", "status"):
-                                reply = await on_status_request()
-                                await self.send_message(reply)
-                            elif text in ("/rewards", "/ricompense", "/yield", "/guadagni", "rewards", "ricompense"):
-                                reply = await on_rewards_request()
-                                await self.send_message(reply)
-                            elif text in ("/stop", "/halt", "stop"):
-                                reply = await on_stop_request()
-                                await self.send_message(reply)
-                            elif text in ("/resume", "/start", "start"):
-                                reply = await on_resume_request()
-                                await self.send_message(reply)
-                            elif text in ("/ping", "ping"):
-                                await self.send_message("🏓 <b>Pong!</b> Il bot è attivo e connesso.")
-                            elif text.startswith("/"):
-                                help_msg = (
-                                    "🤖 <b>Comandi Disponibili:</b>\n\n"
-                                    "• <code>/status</code> - Saldo, ordini e mercati attivi\n"
-                                    "• <code>/rewards</code> - Calcolo ricompense in tempo reale ($/ora e $/giorno)\n"
-                                    "• <code>/stop</code> - Cancellazione ordini ed arresto emergenza\n"
-                                    "• <code>/resume</code> - Riattiva la quotazione\n"
-                                    "• <code>/ping</code> - Verifica se il bot risponde"
-                                )
-                                await self.send_message(help_msg)
+                            print(f"[Telegram Bot] Ricevuto messaggio: '{raw_text}' (cmd: '{cmd}') da chat {chat_id}")
 
-            except Exception:
-                pass
+                            if self.chat_id and chat_id != str(self.chat_id):
+                                print(f"[Telegram Bot] Ignorato messaggio da chat {chat_id} (chat_id autorizzato: {self.chat_id})")
+                                continue
+
+                            try:
+                                if cmd in ("/info", "/help", "info", "help", "/comandi", "comandi"):
+                                    if on_info_request:
+                                        reply = await on_info_request()
+                                    else:
+                                        reply = "🤖 Digita /status, /rewards, /accumulated, /target"
+                                    await self.send_message(reply)
+                                elif cmd in ("/accumulated", "/storico", "/accumulate", "/totale", "/payouts", "accumulated", "storico", "totale"):
+                                    if on_accumulated_request:
+                                        reply = await on_accumulated_request()
+                                        await self.send_message(reply)
+                                elif cmd in ("/status", "/stats", "status"):
+                                    reply = await on_status_request()
+                                    await self.send_message(reply)
+                                elif cmd in ("/rewards", "/ricompense", "/yield", "/guadagni", "rewards", "ricompense"):
+                                    reply = await on_rewards_request()
+                                    await self.send_message(reply)
+                                elif cmd in ("/target", "/rischio", "target", "rischio") and on_target_request:
+                                    reply = await on_target_request(raw_text)
+                                    await self.send_message(reply)
+                                elif cmd in ("/stop", "/halt", "stop"):
+                                    reply = await on_stop_request()
+                                    await self.send_message(reply)
+                                elif cmd in ("/resume", "/start", "start"):
+                                    reply = await on_resume_request()
+                                    await self.send_message(reply)
+                                elif cmd in ("/ping", "ping"):
+                                    await self.send_message("🏓 <b>Pong!</b> Il bot è attivo e connesso.")
+                                elif cmd.startswith("/"):
+                                    if on_info_request:
+                                        reply = await on_info_request()
+                                    else:
+                                        reply = "🤖 Comando non riconosciuto. Digita <code>/info</code> per la lista completa."
+                                    await self.send_message(reply)
+                            except Exception as cmd_err:
+                                print(f"[Telegram Bot] Errore esecuzione '{cmd}': {cmd_err}")
+                                await self.send_message(f"⚠️ Errore esecuzione comando: {cmd_err}")
+
+            except Exception as loop_err:
+                print(f"[Telegram Bot] Polling loop exception: {loop_err}")
+                await asyncio.sleep(2)
 
             await asyncio.sleep(2.0)
 
 
 telegram = TelegramNotifier()
+
+

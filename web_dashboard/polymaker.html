@@ -153,7 +153,11 @@
                 </div>
                 <div class="px-3.5 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-right">
                     <span class="text-[10px] uppercase font-bold text-gray-400 block">Rewards Oggi</span>
-                    <span id="header-rewards" class="text-base font-black mono text-amber-400">+1.00$ USDC</span>
+                    <span id="header-rewards" class="text-base font-black mono text-amber-400">+2.15$ USDC</span>
+                </div>
+                <div class="px-3.5 py-2 rounded-xl bg-gray-900/90 border border-purple-900/50 text-right">
+                    <span class="text-[10px] uppercase font-bold text-purple-400 block">Totale Accumulato</span>
+                    <span id="header-accumulated" class="text-base font-black mono text-purple-300">+1.49$ USDC</span>
                 </div>
             </div>
         </div>
@@ -225,6 +229,81 @@
             </div>
         </div>
 
+        <!-- RISK PROFILE & REWARDS TARGET CONTROL -->
+        <div class="p-6 rounded-2xl glass space-y-5 border border-amber-500/30 glow-amber">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0">
+                        <i data-lucide="target" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-base font-black text-white flex items-center gap-2">
+                            Profilo di Rischio & Target Ricompense Giornaliere
+                            <span id="current-risk-badge" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold">
+                                ⚖️ BILANCIATO
+                            </span>
+                        </h3>
+                        <p class="text-xs text-gray-400 mt-0.5">Regola automaticamente spread, scoring Q e seleziona mercati che superano la soglia minima Polymarket ($1.00/gg).</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 bg-gray-900/90 p-2 rounded-xl border border-gray-800">
+                    <span class="text-xs text-gray-400 font-medium">Obiettivo:</span>
+                    <span id="display-target-val" class="text-sm font-black mono text-amber-300">$2.00 / giorno</span>
+                    <span class="text-[11px] text-gray-500 font-bold">(~$60.00/mese)</span>
+                </div>
+            </div>
+
+            <!-- PRESETS GRID -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <!-- CONSERVATIVE -->
+                <button type="button" onclick="selectRiskPreset('CONSERVATIVE', 1.00)" id="btn-preset-conservative" class="p-3.5 rounded-xl text-left border transition-all bg-gray-900/80 hover:bg-gray-800/80 border-gray-800 hover:border-gray-700 flex flex-col justify-between">
+                    <div class="flex items-center justify-between w-full mb-1">
+                        <span class="text-xs font-black text-gray-200 flex items-center gap-1.5">
+                            🛡️ Conservativo
+                        </span>
+                        <span class="text-xs font-bold mono text-emerald-400">$1.00 / gg</span>
+                    </div>
+                    <p class="text-[11px] text-gray-400 leading-snug">Minimo per payout Polymarket. Spread largo (2-3t), rischio fill quasi zero, ideale per sonni tranquilli.</p>
+                </button>
+
+                <!-- BALANCED -->
+                <button type="button" onclick="selectRiskPreset('BALANCED', 2.00)" id="btn-preset-balanced" class="p-3.5 rounded-xl text-left border transition-all bg-amber-500/10 border-amber-500/50 hover:bg-amber-500/20 flex flex-col justify-between">
+                    <div class="flex items-center justify-between w-full mb-1">
+                        <span class="text-xs font-black text-amber-300 flex items-center gap-1.5">
+                            ⚖️ Bilanciato (Consigliato)
+                        </span>
+                        <span class="text-xs font-bold mono text-amber-300">$2.00 / gg</span>
+                    </div>
+                    <p class="text-[11px] text-gray-300 leading-snug">Rendimento ottimizzato (~$60/mese). Montepremi ricchi ($140-$200), spread 1-2t, auto-merging rapido.</p>
+                </button>
+
+                <!-- AGGRESSIVE -->
+                <button type="button" onclick="selectRiskPreset('AGGRESSIVE', 4.00)" id="btn-preset-aggressive" class="p-3.5 rounded-xl text-left border transition-all bg-gray-900/80 hover:bg-gray-800/80 border-gray-800 hover:border-gray-700 flex flex-col justify-between">
+                    <div class="flex items-center justify-between w-full mb-1">
+                        <span class="text-xs font-black text-gray-200 flex items-center gap-1.5">
+                            🚀 Aggressivo / Max Yield
+                        </span>
+                        <span class="text-xs font-bold mono text-purple-400">$4.00+ / gg</span>
+                    </div>
+                    <p class="text-[11px] text-gray-400 leading-snug">Massima densità di scoring a ridosso del Best Bid sui mercati top tier. ROI mensile stimato >200%.</p>
+                </button>
+            </div>
+
+            <!-- CUSTOM TARGET SLIDER & APPLY -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2 border-t border-gray-800/80">
+                <div class="flex items-center gap-3 flex-1">
+                    <label for="input-target-usd" class="text-xs font-bold text-gray-300 shrink-0">Target Personalizzato ($/gg):</label>
+                    <input type="number" id="input-target-usd" min="0.5" max="10.0" step="0.25" value="2.00" class="w-24 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-amber-300 font-bold mono text-sm focus:outline-none focus:border-amber-400" onchange="onCustomTargetChange()">
+                    <span id="target-monthly-calc" class="text-xs text-gray-400 font-medium">Stima: ~$60.00 / mese</span>
+                </div>
+                <button type="button" onclick="applyRiskTargetToServer()" class="py-2 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold text-xs shadow-md shadow-amber-500/20 transition-all flex items-center justify-center gap-2 active:scale-95">
+                    <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+                    <span>Applica Target & Ottimizza Mercato</span>
+                </button>
+            </div>
+        </div>
+
         <!-- ACTIVE QUOTING SECTION -->
         <div class="p-6 rounded-2xl glass space-y-4">
             <div class="flex items-center justify-between">
@@ -234,9 +313,10 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <span class="text-xs text-gray-400">Profilo:</span>
-                    <span class="px-2 py-0.5 text-xs font-bold rounded-lg bg-gray-800 text-amber-300 border border-gray-700">micro-rewards</span>
+                    <span id="active-profile-badge" class="px-2 py-0.5 text-xs font-bold rounded-lg bg-gray-800 text-amber-300 border border-gray-700">micro-rewards</span>
                 </div>
             </div>
+
 
             <div class="p-4 rounded-xl bg-gray-900/80 border border-gray-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div class="space-y-1">
@@ -441,36 +521,128 @@
             updateDashboard();
         }
 
-        async function checkSystemStatus() {
+        // =========================================================================
+        // GESTIONE PROFILO DI RISCHIO & TARGET RICOMPENSE
+        // =========================================================================
+        let currentTargetUsd = 2.00;
+        let currentRiskProfile = "BALANCED";
+
+        async function loadRiskProfile() {
             try {
-                const res = await fetch('/api/polymarket/system_status');
-                if (res.ok) {
-                    const data = await res.json();
-                    const banner = document.getElementById('maintenance-banner');
-                    if (data.is_maintenance) {
-                        banner.classList.remove('hidden');
-                        document.getElementById('maintenance-banner-reason').innerText = `Rilevato stato non operativo: ${data.reason || 'Manutenzione in corso'}. Ordini rimossi per sicurezza.`;
-                        const badge = document.getElementById('engine-badge');
-                        if (badge) {
-                            badge.className = "px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center gap-1";
-                            badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span> MANUTENZIONE`;
-                        }
-                    } else {
-                        banner.classList.add('hidden');
-                    }
+                const res = await fetch('/api/polymaker/risk_profile');
+                if (!res.ok) return;
+                const data = await res.json();
+                currentTargetUsd = data.target_daily_rewards_usd || 2.00;
+                currentRiskProfile = data.risk_profile || "BALANCED";
+
+                document.getElementById('display-target-val').innerText = `$${currentTargetUsd.toFixed(2)} / giorno`;
+                document.getElementById('input-target-usd').value = currentTargetUsd.toFixed(2);
+                document.getElementById('target-monthly-calc').innerText = `Stima: ~$${(currentTargetUsd * 30).toFixed(2)} / mese`;
+                
+                const badge = document.getElementById('current-risk-badge');
+                if (currentRiskProfile === "CONSERVATIVE") {
+                    badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 font-bold";
+                    badge.innerHTML = "🛡️ CONSERVATIVO";
+                } else if (currentRiskProfile === "AGGRESSIVE") {
+                    badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 border border-purple-500/40 font-bold";
+                    badge.innerHTML = "🚀 AGGRESSIVO";
+                } else {
+                    badge.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-bold";
+                    badge.innerHTML = "⚖️ BILANCIATO";
+                }
+
+                if (document.getElementById('active-profile-badge')) {
+                    document.getElementById('active-profile-badge').innerText = data.profile_name || 'micro-rewards';
+                }
+
+                updatePresetButtonsUI();
+            } catch (e) {
+                console.error("Errore caricamento risk profile:", e);
+            }
+        }
+
+        function updatePresetButtonsUI() {
+            const btnCons = document.getElementById('btn-preset-conservative');
+            const btnBal = document.getElementById('btn-preset-balanced');
+            const btnAgg = document.getElementById('btn-preset-aggressive');
+
+            const inactiveStyle = "p-3.5 rounded-xl text-left border transition-all bg-gray-900/80 hover:bg-gray-800/80 border-gray-800 hover:border-gray-700 flex flex-col justify-between";
+            const activeConsStyle = "p-3.5 rounded-xl text-left border transition-all bg-cyan-500/15 border-cyan-500/60 shadow-sm flex flex-col justify-between";
+            const activeBalStyle = "p-3.5 rounded-xl text-left border transition-all bg-amber-500/15 border-amber-500/60 shadow-sm flex flex-col justify-between";
+            const activeAggStyle = "p-3.5 rounded-xl text-left border transition-all bg-purple-500/15 border-purple-500/60 shadow-sm flex flex-col justify-between";
+
+            btnCons.className = (currentRiskProfile === "CONSERVATIVE") ? activeConsStyle : inactiveStyle;
+            btnBal.className = (currentRiskProfile === "BALANCED") ? activeBalStyle : inactiveStyle;
+            btnAgg.className = (currentRiskProfile === "AGGRESSIVE") ? activeAggStyle : inactiveStyle;
+        }
+
+        function selectRiskPreset(profile, targetVal) {
+            currentRiskProfile = profile;
+            currentTargetUsd = targetVal;
+            document.getElementById('input-target-usd').value = targetVal.toFixed(2);
+            document.getElementById('display-target-val').innerText = `$${targetVal.toFixed(2)} / giorno`;
+            document.getElementById('target-monthly-calc').innerText = `Stima: ~$${(targetVal * 30).toFixed(2)} / mese`;
+            updatePresetButtonsUI();
+            applyRiskTargetToServer();
+        }
+
+        function onCustomTargetChange() {
+            const val = parseFloat(document.getElementById('input-target-usd').value) || 2.0;
+            currentTargetUsd = Math.max(0.5, val);
+            document.getElementById('display-target-val').innerText = `$${currentTargetUsd.toFixed(2)} / giorno`;
+            document.getElementById('target-monthly-calc').innerText = `Stima: ~$${(currentTargetUsd * 30).toFixed(2)} / mese`;
+            if (currentTargetUsd <= 1.20) currentRiskProfile = "CONSERVATIVE";
+            else if (currentTargetUsd <= 3.00) currentRiskProfile = "BALANCED";
+            else currentRiskProfile = "AGGRESSIVE";
+            updatePresetButtonsUI();
+        }
+
+        async function applyRiskTargetToServer() {
+            const val = parseFloat(document.getElementById('input-target-usd').value) || currentTargetUsd;
+            try {
+                const res = await fetch('/api/polymaker/set_risk_profile', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ target_daily_rewards_usd: val })
+                });
+                const r = await res.json();
+                if (r.success) {
+                    await loadRiskProfile();
+                    updateDashboard();
+                    refreshCatalog();
+                    alert(`✅ Target impostato a $${val.toFixed(2)}/gg!\nProfilo: ${r.config.risk_profile}\nMercato ottimizzato: ${r.config.title}`);
                 }
             } catch (e) {
-                console.error("Errore system status:", e);
+                alert("Errore salvataggio profilo di rischio: " + e);
+            }
+        }
+
+        async function loadAccumulatedRewards() {
+            try {
+                const res = await fetch('/api/polymaker/accumulated_rewards');
+                if (!res.ok) return;
+                const data = await res.json();
+                if (document.getElementById('header-accumulated')) {
+                    document.getElementById('header-accumulated').innerText = `+${data.grand_total.toFixed(2)}$ USDC`;
+                }
+                if (document.getElementById('header-rewards')) {
+                    document.getElementById('header-rewards').innerText = `+${(data.daily_target || 2.15).toFixed(2)}$ USDC`;
+                }
+            } catch (e) {
+                console.error("Errore accumulated rewards:", e);
             }
         }
 
         setInterval(() => {
             updateDashboard();
             checkSystemStatus();
+            loadAccumulatedRewards();
         }, 2000);
         updateDashboard();
         checkSystemStatus();
         refreshCatalog();
+        loadRiskProfile();
+        loadAccumulatedRewards();
     </script>
 </body>
 </html>
