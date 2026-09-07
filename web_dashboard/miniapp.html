@@ -219,6 +219,9 @@
           Ricompense Oggi (Live CLOB)
         </div>
         <div class="flex items-center gap-1.5">
+          <span id="val-sprint-badge" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30">
+            ⚡ Sprint (35 q)
+          </span>
           <span id="val-daily-pool-badge" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800/80 text-purple-300 border border-purple-500/30">
             Pool: 200$/die
           </span>
@@ -553,6 +556,18 @@
         const marketPool = Number(resRewards.market_daily_pool || 200.0);
         if (document.getElementById('val-daily-pool-badge')) {
           document.getElementById('val-daily-pool-badge').innerText = `Pool: ${marketPool.toFixed(0)}$/die`;
+        }
+
+        if (document.getElementById('val-sprint-badge')) {
+          const isSprint = resRewards.is_sprint !== false;
+          const modeName = resRewards.mode || (isSprint ? '⚡ Sprint (35 q)' : '🚢 Cruise (20 q)');
+          const el = document.getElementById('val-sprint-badge');
+          el.innerText = modeName;
+          if (isSprint) {
+            el.className = 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30';
+          } else {
+            el.className = 'text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+          }
         }
 
         const poolPct = Number(resRewards.pct_pool || 0.0);

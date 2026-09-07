@@ -1400,6 +1400,13 @@ async def handle_polymaker_accumulated_rewards(request):
         daily_val = daily_yield_usd if daily_yield_usd > 0 else float(cfg.get("expected_daily_reward", 1.55))
         hourly_val = hourly_rate if hourly_rate > 0 else (daily_val / 24.0)
 
+        sprint_target = float(cfg.get("sprint_threshold_usd", cfg.get("target_daily_rewards_usd", 2.0)))
+        sprint_shares = float(cfg.get("sprint_shares", 35.0))
+        cruise_shares = float(cfg.get("cruise_shares", 20.0))
+        is_sprint = (today_earned < sprint_target)
+        mode_label = f"Sprint ({sprint_shares:.0f} q)" if is_sprint else f"Cruise ({cruise_shares:.0f} q)"
+        active_shares = sprint_shares if is_sprint else cruise_shares
+
         return web.json_response({
             "onchain_total": round(onchain_total, 4),
             "payouts_count": payouts_count,
@@ -1410,7 +1417,13 @@ async def handle_polymaker_accumulated_rewards(request):
             "grand_total": round(onchain_total + today_earned, 4),
             "hourly_rate": round(hourly_val, 4),
             "mins_left": mins_left,
-            "daily_target": float(cfg.get("target_daily_rewards_usd", 1.5)),
+            "daily_target": sprint_target,
+            "mode": mode_label,
+            "is_sprint": is_sprint,
+            "sprint_threshold": sprint_target,
+            "sprint_shares": sprint_shares,
+            "cruise_shares": cruise_shares,
+            "active_shares": active_shares,
             "recent_payouts": payouts[:5]
         })
     except Exception as e:
@@ -1752,11 +1765,18 @@ async def tg_rewards_handler() -> str:
                 f"• <b>Accredito Stanotte:</b> Alle 00:00 UTC (solo se il totale raggiunge almeno $1.00)."
             )
 
+        sprint_target = float(cfg.get("sprint_threshold_usd", cfg.get("target_daily_rewards_usd", 2.0)))
+        sprint_shares = float(cfg.get("sprint_shares", 35.0))
+        cruise_shares = float(cfg.get("cruise_shares", 20.0))
+        is_sprint = (today_earned < sprint_target)
+        mode_label = f"⚡ Sprint ({sprint_shares:.0f} q)" if is_sprint else f"🚢 Cruise ({cruise_shares:.0f} q)"
+
         return (
             f"🏆 <b>DATI UFFICIALI RICOMPENSE POLYMARKET</b>\n\n"
             f"• <b>Wallet Funder:</b> <code>{wallet[:6]}...{wallet[-4:]}</code>\n"
             f"• <b>Mercato Attivo:</b> <i>{question}</i>\n"
             f"• <b>Montepremi Mercato:</b> <code>${daily_pool:.0f} USDC / giorno</code>\n"
+            f"• <b>Modalità Quota:</b> <b>{mode_label}</b> (Obiettivo: ${sprint_target:.2f})\n"
             f"• <b>Stato Scoring Ordini:</b> {scoring_badge}\n\n"
             f"💰 <b>Guadagno Accumulato Oggi (Live CLOB):</b>\n"
             f"• <b>Totale Odierno:</b> <code>+{today_earned:.4f}$ USDC</code>\n"
