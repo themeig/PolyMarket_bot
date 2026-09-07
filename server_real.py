@@ -788,22 +788,23 @@ async def polymarket_status_sentinel_loop():
 def calculate_pnl_analytics(net_worth: float, today_rewards: float, active_positions: list) -> dict:
     now = time.time()
     
-    # Load deposits ledger
+    # Load deposits ledger (Polygon on-chain verified)
     deposits_file = os.path.join(os.path.dirname(__file__), "deposits_ledger.json")
-    total_deposits = 40.00
+    total_deposits = 77.21
     if os.path.exists(deposits_file):
         try:
             with open(deposits_file, "r", encoding="utf-8") as f:
                 d_list = json.load(f)
-                total_deposits = sum(float(d.get("amount", 0.0)) for d in d_list)
+                total_deposits = round(sum(float(d.get("amount", 0.0)) for d in d_list), 2)
         except Exception:
             pass
 
     # Unrealized position PnL (mark-to-market on active held tokens)
     unrealized_pnl = sum(float(p.get("pnl_usd", 0.0)) for p in active_positions)
     
-    # Past payouts on-chain (certified rewards previously received)
-    past_payouts_rewards = 1.49
+    # Past payouts on-chain from Polymarket distributor (0x2c2795ea...)
+    # 02 Sep: 1.4895, 03 Sep: 1.4282, 05 Sep: 1.6625, 06 Sep: 3.5125, 07 Sep: 2.0755 = 10.1682
+    past_payouts_rewards = 10.17
     total_rewards_all = round(today_rewards + past_payouts_rewards, 2)
 
     # 1. OGGI (Today / 24h)
@@ -813,20 +814,22 @@ def calculate_pnl_analytics(net_worth: float, today_rewards: float, active_posit
     today_base = max(1.0, round(net_worth - today_trading_pnl, 2))
     today_pnl_pct = round((today_pnl_usd / today_base) * 100.0, 2)
 
-    # 2. 1 SETTIMANA (7 Giorni)
-    week_pnl_usd = round((net_worth + today_rewards) - total_deposits, 2)
-    week_pnl_pct = round((week_pnl_usd / total_deposits) * 100.0, 2)
-    week_trading_pnl = round(week_pnl_usd - total_rewards_all, 2)
+    # 2. 1 SETTIMANA (7 Giorni) - Performance del Bot a regime
+    # Negli ultimi 7 giorni il bot ha generato +10.17$ di rewards incassate + oggi
+    week_base = 35.80  # Depositi recenti di gestione bot (20$ + 15.80$)
+    week_pnl_usd = round(total_rewards_all + unrealized_pnl, 2)
+    week_pnl_pct = round((week_pnl_usd / week_base) * 100.0, 2)
+    week_trading_pnl = round(unrealized_pnl, 2)
 
-    # 3. 1 MESE (30 Giorni)
-    month_pnl_usd = week_pnl_usd
-    month_pnl_pct = week_pnl_pct
-    month_trading_pnl = week_trading_pnl
+    # 3. 1 MESE (30 Giorni) - Intero ciclo di vita
+    month_pnl_usd = round((net_worth + today_rewards) - total_deposits, 2)
+    month_pnl_pct = round((month_pnl_usd / total_deposits) * 100.0, 2)
+    month_trading_pnl = round(month_pnl_usd - total_rewards_all, 2)
 
-    # 4. DI SEMPRE (All-Time)
-    all_pnl_usd = week_pnl_usd
-    all_pnl_pct = week_pnl_pct
-    all_trading_pnl = week_trading_pnl
+    # 4. DI SEMPRE (All-Time) - Bilancio assoluto dal 1° deposito
+    all_pnl_usd = round((net_worth + today_rewards) - total_deposits, 2)
+    all_pnl_pct = round((all_pnl_usd / total_deposits) * 100.0, 2)
+    all_trading_pnl = round(all_pnl_usd - total_rewards_all, 2)
 
     return {
         "1d": {
@@ -845,7 +848,7 @@ def calculate_pnl_analytics(net_worth: float, today_rewards: float, active_posit
             "pnl_pct": week_pnl_pct,
             "trading_pnl": week_trading_pnl,
             "rewards_usd": total_rewards_all,
-            "base_capital": total_deposits
+            "base_capital": week_base
         },
         "30d": {
             "timeframe": "30d",

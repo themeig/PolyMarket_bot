@@ -1,12 +1,38 @@
 [
   {
-    "date": "2026-09-01T15:00:00Z",
-    "amount": 20.0,
-    "note": "Deposito iniziale attivazione bot"
+    "date": "2026-08-30T18:38:49Z",
+    "amount": 13.69,
+    "tx": "0x36b1b06f5ff4342d53ce61400030b45b619d8770a31ff877acfdf99958fd83d0",
+    "note": "Primo deposito RelayDepository"
   },
   {
-    "date": "2026-09-05T12:00:00Z",
-    "amount": 20.0,
-    "note": "Ricarica fondi collaterale"
+    "date": "2026-09-01T10:57:12Z",
+    "amount": 11.36,
+    "tx": "0x0688127b5398526bb2dc3e5242533097313c2d55c90bcdb4e8a0f12deeb2a052",
+    "note": "Deposito RelayDepository"
+  },
+  {
+    "date": "2026-09-01T11:03:27Z",
+    "amount": 12.36,
+    "tx": "0x26dfc0988c3662d451e9d08385670c873f2f6de9a6d2546a4b53847166d19e6d",
+    "note": "Swap Uniswap USDC.e verso Proxy"
+  },
+  {
+    "date": "2026-09-02T04:54:22Z",
+    "amount": 4.00,
+    "tx": "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+    "note": "Ricarica RelayDepository"
+  },
+  {
+    "date": "2026-09-03T19:58:51Z",
+    "amount": 20.00,
+    "tx": "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+    "note": "Ricarica RelayDepository"
+  },
+  {
+    "date": "2026-09-05T12:01:16Z",
+    "amount": 15.80,
+    "tx": "0x1da22f6311495f8b6a570f669a3120ee51828ebc075714b36200deeda82853da",
+    "note": "Ricarica RelayDepository"
   }
 ]

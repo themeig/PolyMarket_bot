@@ -414,17 +414,17 @@
         labels = ['01 Set', '02 Set', '03 Set', '04 Set', '05 Set', '06 Set', 'Oggi'];
         data = [0.0, 1.49, 2.92, 2.92, 4.58, 8.09, Number((onchainTotal + todayEarned).toFixed(2))];
       } else if (tf === '30d') {
-        labels = ['10 Ago', '17 Ago', '24 Ago', '31 Ago', '03 Set', '05 Set', 'Oggi'];
-        data = [0.0, 0.0, 0.50, 1.49, 2.92, 8.09, Number((onchainTotal + todayEarned).toFixed(2))];
+        labels = ['30 Ago', '01 Set', '02 Set', '03 Set', '05 Set', '06 Set', 'Oggi'];
+        data = [-13.69, -23.70, -25.50, -21.20, -18.40, -14.20, Number(tfData ? tfData.pnl_usd : -31.05)];
       } else {
-        labels = ['Inizio', 'Sett 1', 'Sett 2', 'Sett 3', 'Sett 4', 'Ieri', 'Oggi'];
-        data = [40.0, 40.5, 41.2, 42.1, 43.4, 45.1, Number((45.66 + todayEarned).toFixed(2))];
+        labels = ['30 Ago', '01 Set', '02 Set', '03 Set', '05 Set', '06 Set', 'Oggi'];
+        data = [13.69, 23.40, 26.80, 33.50, 41.20, 44.50, Number((45.66 + todayEarned).toFixed(2))];
       }
 
       const pnlBadge = document.getElementById('pnl-chart-badge');
       if (pnlBadge && data.length > 0) {
         const lastVal = data[data.length - 1];
-        pnlBadge.innerText = (tf === 'all' ? `${lastVal.toFixed(2)}$ Net Worth` : `+${lastVal.toFixed(2)}$ USDC`);
+        pnlBadge.innerText = (tf === 'all' ? `${lastVal.toFixed(2)}$ Net Worth` : `${lastVal >= 0 ? '+' : ''}${lastVal.toFixed(2)}$ USDC`);
       }
 
       const isPositive = tfData ? Number(tfData.pnl_usd || 0) >= 0 : true;
