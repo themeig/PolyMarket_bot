@@ -989,10 +989,11 @@ async def handle_polymaker_status(request):
         regime = "MAINTENANCE" if maintenance_state["is_maintenance"] else "QUIET"
         inventory = sum(p["current_val"] for p in active_positions)
 
+        cfg = load_risk_config()
+        active_slug = cfg.get("slug", "fetterman-out-before-2027")
+        active_title = cfg.get("title", "Fetterman out by December 31, 2026?")
+
         markets_toml_path = os.path.join(os.path.dirname(__file__), "external_repos", "poly-maker", "config", "markets.toml")
-        active_slug = "will-anthropic-ipo-by-october-15-2026-949"
-        active_title = "Will Anthropic IPO by October 15, 2026?"
-        
         if os.path.exists(markets_toml_path):
             with open(markets_toml_path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -1001,13 +1002,16 @@ async def handle_polymaker_status(request):
                         active_slug = line.split("=")[1].strip().strip('"').strip("'")
 
         if os.path.exists(db_path):
-            conn = sqlite3.connect(db_path)
-            cur = conn.cursor()
-            cur.execute("SELECT question FROM markets WHERE slug=?", (active_slug,))
-            row = cur.fetchone()
-            if row:
-                active_title = row[0]
-            conn.close()
+            try:
+                conn = sqlite3.connect(db_path)
+                cur = conn.cursor()
+                cur.execute("SELECT question FROM markets WHERE slug=?", (active_slug,))
+                row = cur.fetchone()
+                if row and row[0]:
+                    active_title = row[0]
+                conn.close()
+            except Exception:
+                pass
 
         today_rewards = await fetch_daily_rewards_live()
         pnl_analytics = calculate_pnl_analytics(net_worth, today_rewards, active_positions)
@@ -1576,7 +1580,7 @@ async def get_active_market_daily_pool(cid: str = None) -> float:
     cfg = load_risk_config()
     slug = cfg.get("slug", "will-anthropic-ipo-by-october-15-2026-949")
     if not cid:
-        cid = getattr(engine, "active_condition_id", None) or "0xb55277532ee64d5d561f80a5f3703930a12955e9943709e60cd029656d7e5291"
+        cid = cfg.get("condition_id") or getattr(engine, "active_condition_id", None) or "0x25ea45fb5a112391bf64f38056b84394f66cb47a06aa8208339822408fb0a315"
 
     if cid in _market_pool_cache:
         val, ts = _market_pool_cache[cid]
@@ -1612,7 +1616,7 @@ async def get_active_market_daily_pool(cid: str = None) -> float:
     except Exception:
         pass
 
-    return float(cfg.get("daily_pool", 200.0) or 200.0)
+    return float(cfg.get("daily_pool", 300.0) or 300.0)
 
 async def fetch_clob_rewards_metrics(daily_pool: float = None) -> dict:
     """Fetch exact accumulated rewards and pool share in real-time from Polymarket CLOB."""
