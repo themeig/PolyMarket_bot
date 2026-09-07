@@ -2,7 +2,7 @@
   "target_daily_rewards_usd": 1.0,
   "sprint_threshold_usd": 1.0,
   "sprint_shares": 45.0,
-  "cruise_shares": 20.0,
+  "cruise_shares": 35.0,
   "min_free_cash_usdc": 0.70,
   "risk_profile": "TURBO_SPRINT",
   "profile_name": "micro-rewards",
