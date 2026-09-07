@@ -218,34 +218,43 @@
           <i class="fa-solid fa-gift text-purple-400"></i>
           Ricompense Oggi (Live CLOB)
         </div>
-        <span id="rewards-pct-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
-          80.0%
-        </span>
+        <div class="flex items-center gap-1.5">
+          <span id="val-daily-pool-badge" class="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800/80 text-purple-300 border border-purple-500/30">
+            Pool: 200$/die
+          </span>
+          <span id="rewards-pct-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+            34.3%
+          </span>
+        </div>
       </div>
 
       <!-- PROGRESS BAR -->
       <div class="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden p-0.5 border border-slate-700/50 mb-2">
-        <div id="progress-bar" class="progress-bar-fill bg-gradient-to-r from-purple-500 to-emerald-400 h-full rounded-full" style="width: 80%;"></div>
+        <div id="progress-bar" class="progress-bar-fill bg-gradient-to-r from-purple-500 to-emerald-400 h-full rounded-full" style="width: 34%;"></div>
       </div>
 
       <div class="flex items-center justify-between text-xs mb-2">
-        <span id="val-today-earned" class="font-bold text-emerald-400 text-sm">+0.7997$ USDC</span>
+        <span id="val-today-earned" class="font-bold text-emerald-400 text-sm">+0.3431$ USDC</span>
         <span class="text-[11px] text-slate-400">Soglia Payout: <b>$1.00</b></span>
       </div>
 
-      <!-- REWARDS METRICS GRID -->
-      <div class="grid grid-cols-3 gap-1.5 pt-2 border-t border-slate-800 text-[11px] text-center">
+      <!-- REWARDS METRICS GRID (4 COLUMNS) -->
+      <div class="grid grid-cols-4 gap-1 pt-2 border-t border-slate-800 text-[10px] text-center">
         <div class="bg-slate-800/40 rounded-lg p-1.5">
-          <div class="text-[9px] text-slate-400 uppercase">Quota Pool</div>
-          <div id="val-pool-pct" class="font-bold text-slate-200 mt-0.5">1.66%</div>
+          <div class="text-[8px] text-slate-400 uppercase">Quota Pool</div>
+          <div id="val-pool-pct" class="font-bold text-slate-200 mt-0.5">0.50%</div>
         </div>
         <div class="bg-slate-800/40 rounded-lg p-1.5">
-          <div class="text-[9px] text-slate-400 uppercase">Velocità Live</div>
-          <div id="val-hourly-rate" class="font-bold text-slate-200 mt-0.5">+0.069$/h</div>
+          <div class="text-[8px] text-slate-400 uppercase">Resa 24h</div>
+          <div id="val-daily-yield" class="font-bold text-emerald-300 mt-0.5">~1.00$/d</div>
         </div>
         <div class="bg-slate-800/40 rounded-lg p-1.5">
-          <div class="text-[9px] text-slate-400 uppercase">Tempo $1.00</div>
-          <div id="val-time-left" class="font-bold text-purple-300 mt-0.5">~2h 54m</div>
+          <div class="text-[8px] text-slate-400 uppercase">Velocità</div>
+          <div id="val-hourly-rate" class="font-bold text-slate-200 mt-0.5">+0.041$/h</div>
+        </div>
+        <div class="bg-slate-800/40 rounded-lg p-1.5">
+          <div class="text-[8px] text-slate-400 uppercase">Tempo $1.00</div>
+          <div id="val-time-left" class="font-bold text-purple-300 mt-0.5">~15h 50m</div>
         </div>
       </div>
     </div>
@@ -541,18 +550,30 @@
         document.getElementById('rewards-pct-badge').innerText = thresholdPct.toFixed(1) + '%';
         document.getElementById('progress-bar').style.width = thresholdPct + '%';
 
+        const marketPool = Number(resRewards.market_daily_pool || 200.0);
+        if (document.getElementById('val-daily-pool-badge')) {
+          document.getElementById('val-daily-pool-badge').innerText = `Pool: ${marketPool.toFixed(0)}$/die`;
+        }
+
         const poolPct = Number(resRewards.pct_pool || 0.0);
         document.getElementById('val-pool-pct').innerText = poolPct.toFixed(2) + '%';
 
-        const hourlyRate = Number(resRewards.hourly_rate || 0.0);
+        const dailyYield = Number(resRewards.daily_yield_usd || (poolPct / 100.0 * marketPool));
+        if (document.getElementById('val-daily-yield')) {
+          document.getElementById('val-daily-yield').innerText = `~${dailyYield.toFixed(2)}$/d`;
+        }
+
+        const hourlyRate = Number(resRewards.hourly_rate || (dailyYield / 24.0));
         document.getElementById('val-hourly-rate').innerText = '+' + hourlyRate.toFixed(4) + '$/h';
 
         if (todayEarned >= 1.00) {
           document.getElementById('val-time-left').innerText = 'Raggiunto!';
           document.getElementById('val-time-left').className = 'font-bold text-emerald-400 mt-0.5';
         } else if (hourlyRate > 0) {
-          const remUsd = 1.00 - todayEarned;
-          const minsLeft = Math.round((remUsd / hourlyRate) * 60);
+          const remUsd = Math.max(0, 1.00 - todayEarned);
+          const minsLeft = resRewards.mins_left !== undefined && resRewards.mins_left !== null 
+            ? resRewards.mins_left 
+            : Math.round((remUsd / hourlyRate) * 60);
           const h = Math.floor(minsLeft / 60);
           const m = minsLeft % 60;
           document.getElementById('val-time-left').innerText = h > 0 ? `~${h}h ${m}m` : `~${m}m`;

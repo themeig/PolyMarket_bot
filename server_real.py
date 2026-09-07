@@ -1389,12 +1389,13 @@ async def handle_polymaker_accumulated_rewards(request):
         except Exception:
             pass
 
-        daily_pool = float(cfg.get("daily_pool", 100.0))
+        daily_pool = await get_active_market_daily_pool()
         metrics = await fetch_clob_rewards_metrics(daily_pool=daily_pool)
         pct_pool = metrics["pool_pct"]
         daily_yield_usd = metrics["daily_rate"]
         hourly_rate = metrics["hourly_rate"]
         today_earned = metrics["today_earned"]
+        mins_left = metrics.get("mins_left")
 
         daily_val = daily_yield_usd if daily_yield_usd > 0 else float(cfg.get("expected_daily_reward", 1.55))
         hourly_val = hourly_rate if hourly_rate > 0 else (daily_val / 24.0)
@@ -1402,11 +1403,13 @@ async def handle_polymaker_accumulated_rewards(request):
         return web.json_response({
             "onchain_total": round(onchain_total, 4),
             "payouts_count": payouts_count,
+            "market_daily_pool": round(daily_pool, 2),
             "daily_yield_usd": round(daily_val, 2),
             "pct_pool": round(pct_pool, 3),
             "today_earned": round(today_earned, 4),
             "grand_total": round(onchain_total + today_earned, 4),
             "hourly_rate": round(hourly_val, 4),
+            "mins_left": mins_left,
             "daily_target": float(cfg.get("target_daily_rewards_usd", 1.5)),
             "recent_payouts": payouts[:5]
         })
@@ -1552,8 +1555,56 @@ async def tg_info_handler() -> tuple[str, dict]:
     )
     return text, get_info_keyboard()
 
-async def fetch_clob_rewards_metrics(daily_pool: float = 100.0) -> dict:
+_market_pool_cache: dict[str, tuple[float, float]] = {}
+
+async def get_active_market_daily_pool(cid: str = None) -> float:
+    global _market_pool_cache
+    now = time.time()
+    cfg = load_risk_config()
+    slug = cfg.get("slug", "will-anthropic-ipo-by-october-15-2026-949")
+    if not cid:
+        cid = getattr(engine, "active_condition_id", None) or "0xb55277532ee64d5d561f80a5f3703930a12955e9943709e60cd029656d7e5291"
+
+    if cid in _market_pool_cache:
+        val, ts = _market_pool_cache[cid]
+        if now - ts < 300:
+            return val
+
+    # 1. Try CLOB market endpoint
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as hc:
+            r = await hc.get(f"https://clob.polymarket.com/markets/{cid}")
+            if r.status_code == 200:
+                rates = r.json().get("rewards", {}).get("rates", [])
+                if rates:
+                    rate = float(rates[0].get("rewards_daily_rate", 0.0) or 0.0)
+                    if rate > 0:
+                        _market_pool_cache[cid] = (rate, now)
+                        return rate
+    except Exception:
+        pass
+
+    # 2. Try Gamma API slug lookup
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as hc:
+            r = await hc.get(f"https://gamma-api.polymarket.com/markets?slug={slug}")
+            if r.status_code == 200:
+                items = r.json()
+                if items:
+                    for cr in items[0].get("clobRewards", []):
+                        rate = float(cr.get("rewardsDailyRate", 0.0) or 0.0)
+                        if rate > 0:
+                            _market_pool_cache[cid] = (rate, now)
+                            return rate
+    except Exception:
+        pass
+
+    return float(cfg.get("daily_pool", 200.0) or 200.0)
+
+async def fetch_clob_rewards_metrics(daily_pool: float = None) -> dict:
     """Fetch exact accumulated rewards and pool share in real-time from Polymarket CLOB."""
+    if daily_pool is None or daily_pool <= 0:
+        daily_pool = await get_active_market_daily_pool()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     today_earned = 0.0
     pool_pct = 0.0
@@ -1622,7 +1673,7 @@ async def tg_rewards_handler() -> str:
         cfg = load_risk_config()
         slug = cfg.get("slug", "will-anthropic-ipo-by-october-15-2026-949")
         question = cfg.get("title", slug)
-        daily_pool = float(cfg.get("daily_pool", 100.0))
+        daily_pool = await get_active_market_daily_pool()
         wallet = engine.proxy_wallet
 
         # On-chain past rewards
