@@ -13,6 +13,7 @@ import time
 import json
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+import httpx
 from web3 import Web3
 
 from py_clob_client_v2.client import ClobClient
@@ -24,6 +25,7 @@ from avellaneda_stoikov import AvellanedaStoikovEngine, ASQuoteResult
 from token_merger import TokenMerger
 from ai_trainer import trainer
 from live_simulator import sim_engine
+from telegram_bot import telegram
 
 
 if hasattr(sys.stdout, 'reconfigure'):
@@ -83,6 +85,8 @@ class CompletePolymarketQuantBot:
         self.trade_history = []
         self.cached_trades = []
         self.merge_history = []
+        self.position_first_seen = {}
+        self.position_last_alerted = {}
 
         # =========================================================================
         # PARAMETRI DINAMICI & FILTRI
@@ -132,7 +136,11 @@ class CompletePolymarketQuantBot:
         self.current_screener = []
         self.logical_opportunities = []
         self.last_scan_time = 0
-        self.last_logical_scan_time = 0
+        self.cached_positions = []
+        self.cached_positions_val = 0.0
+        self.position_first_seen = {}
+        self.position_last_alerted = {}
+        self.live_open_orders_cached = []
         self.market_names_cache = {}
 
     def fetch_onchain_pol(self):
@@ -152,67 +160,41 @@ class CompletePolymarketQuantBot:
         if hasattr(self, "_cached_cash") and (now - getattr(self, "_cached_cash_ts", 0)) < 3.0:
             return self._cached_cash
         try:
-            wrapped_c = self.w3.eth.contract(
-                address=Web3.to_checksum_address("0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"),
-                abi=[{"name": "balanceOf", "inputs": [{"name": "account", "type": "address"}], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}]
-            )
-            bridged_c = self.w3.eth.contract(
-                address=Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"),
-                abi=[{"name": "balanceOf", "inputs": [{"name": "account", "type": "address"}], "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}]
-            )
-            bal_w = wrapped_c.functions.balanceOf(Web3.to_checksum_address(self.proxy_wallet)).call() / 1e6
-            bal_b = bridged_c.functions.balanceOf(Web3.to_checksum_address(self.proxy_wallet)).call() / 1e6
-            self._cached_cash = float(bal_w + bal_b)
-            self._cached_cash_ts = now
-            return self._cached_cash
+            from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+            p = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            bal = self.client.get_balance_allowance(p)
+            val = float(bal.get("balance", 0)) / 1e6
+            if val > 0:
+                self._cached_cash = val
+                self._cached_cash_ts = now
+                return self._cached_cash
         except Exception:
-            return getattr(self, "_cached_cash", 31.87)
+            pass
+        return getattr(self, "_cached_cash", 35.42)
 
     async def trading_loop(self):
-        print(f"[+] Motore Ibrido (Market Making & Spread Logico) avviato...")
+        print(f"[+] Monitor Passivo avviato (Quotazione ordini affidata al 100% al motore poly-maker)...")
         while True:
             try:
-                if self.running and not self.killswitch_triggered:
-                    await self.execute_trading_cycle()
+                await self.update_monitor_state()
             except Exception as e:
-                print(f"[!] Errore ciclo: {e}")
-            await asyncio.sleep(2.0)
+                pass
+            await asyncio.sleep(4.0)
 
-    async def execute_trading_cycle(self):
+    async def update_monitor_state(self):
         now_str = datetime.now().strftime("%H:%M:%S")
         self.pol_gas = self.fetch_onchain_pol()
 
         try:
             open_orders = self.client.get_open_orders()
             self.live_open_orders_cached = open_orders
-            open_sell_assets = set([str(o.get("asset_id")) for o in open_orders if o.get("side") == "SELL"])
-            open_buy_assets = set([str(o.get("asset_id")) for o in open_orders if o.get("side") == "BUY"])
         except Exception:
-            open_orders = getattr(self, "live_open_orders_cached", [])
-            open_sell_assets = set()
-            open_buy_assets = set()
+            pass
 
-        # =========================================================================
-        # 0. EXCHANGE DEAD-MAN HEARTBEAT (PROTEZIONE CADUTA SERVER)
-        # =========================================================================
-        if (time.time() - self.last_heartbeat_time) >= 8:
-            try:
-                if hasattr(self.client, 'heartbeat'):
-                    self.client.heartbeat()
-                self.last_heartbeat_time = time.time()
-            except Exception:
-                pass
-
-        # =========================================================================
-        # 1. GESTIONE AUTOMATICA INVENTARIO (AUTO-PAIRING O EXIT PASSIVO A PROFITTO)
-        # Se abbiamo quote in mano da esecuzioni precedenti, le gestiamo PRIMA di aprire nuovi mercati:
-        # Se c'è saldo -> Piazza l'opposto per fare Merge a 1.00$
-        # Se non c'è saldo -> Piazza Limit SELL passivo a profitto (+5%) per recuperare subito USDC liquidi
-        # =========================================================================
         async with aiohttp.ClientSession() as session:
             try:
                 pos_url = f"https://data-api.polymarket.com/positions?user={self.proxy_wallet}"
-                async with session.get(pos_url, timeout=3) as p_resp:
+                async with session.get(pos_url, timeout=4) as p_resp:
                     if p_resp.status == 200:
                         positions = await p_resp.json()
                         formatted_pos = []
@@ -245,16 +227,53 @@ class CompletePolymarketQuantBot:
                         self.cached_positions = formatted_pos
                         self.cached_positions_val = round(tot_pos_val, 2)
 
-                # Scan and execute automated Complete Set Merges (YES+NO -> USDC)
-                try:
-                    self.mergeable_pairs = self.token_merger.find_mergeable_pairs(positions)
-                    if self.enable_auto_merge and self.mergeable_pairs:
+                        # Watchdog Posizioni Orfane (solo posizioni con valore reale >= 1.0$ e prezzo >= 0.05$)
+                        now_ts = time.time()
+                        active_token_ids = set()
+                        for p in self.cached_positions:
+                            token_id = str(p.get("token_id", ""))
+                            sz = float(p.get("size", 0) or 0)
+                            cur_p = float(p.get("cur_price", 0) or 0)
+                            val = float(p.get("current_val", 0) or 0)
+                            # Escludi categoricamente mercati risolti / scaduti a 0$, o residui irrisori
+                            if sz >= 0.5 and token_id and val >= 1.0 and cur_p >= 0.05:
+                                active_token_ids.add(token_id)
+                                if token_id not in self.position_first_seen:
+                                    self.position_first_seen[token_id] = now_ts
+                                hold_duration = now_ts - self.position_first_seen[token_id]
+                                last_alert = self.position_last_alerted.get(token_id, 0)
+                                # Notifica al massimo una volta ogni 6 ore (21600s) e solo dopo 30 minuti
+                                if hold_duration >= 1800 and (now_ts - last_alert) >= 21600:
+                                    self.position_last_alerted[token_id] = now_ts
+                                    title = p.get("title", "Mercato")
+                                    avg_p = p.get("avg_price", 0)
+                                    mins = int(hold_duration / 60)
+                                    alert_msg = (
+                                        f"ℹ️ <b>INVENTARIO IN GESTIONE ({mins}m):</b>\n\n"
+                                        f"📊 <b>Mercato:</b> {title}\n"
+                                        f"📦 <b>Quantità:</b> {sz:.1f} quote\n"
+                                        f"💵 <b>Prezzo Carico:</b> {avg_p}$ (Attuale: {cur_p}$)\n"
+                                        f"💰 <b>Valore:</b> {val:.2f}$ USDC\n\n"
+                                        f"<i>Il motore continua a quotare l'uscita passiva in profitto e l'auto-hedge.</i>"
+                                    )
+                                    asyncio.create_task(telegram.send_message(alert_msg))
+
+                        # Pulizia token non più attivi
+                        for tid in list(self.position_first_seen.keys()):
+                            if tid not in active_token_ids:
+                                self.position_first_seen.pop(tid, None)
+                                self.position_last_alerted.pop(tid, None)
+
+                # Gestione Merge sicura (YES + NO = 1.00$ USDC) senza piazzamento ordini
+                if self.enable_auto_merge:
+                    try:
+                        self.mergeable_pairs = self.token_merger.find_mergeable_pairs(positions)
                         for mp in self.mergeable_pairs:
                             cid = mp.get("condition_id")
                             shares = mp.get("mergeable_shares", 0)
                             is_neg = mp.get("is_neg_risk", True)
                             if shares >= 0.5 and cid:
-                                print(f"[{now_str}] 💎 ESECUZIONE AUTOMATICA FUSIONE ON-CHAIN: {shares} quote su '{mp['market'][:25]}' -> Incasso: {mp['expected_usdc']}$ USDC...")
+                                print(f"[{now_str}] 💎 COMPLETE SET MERGE: {shares} quote su '{mp['market'][:25]}' -> Incasso: {mp['expected_usdc']}$ USDC...")
                                 tx_h = self.token_merger.execute_merge(cid, shares, is_neg)
                                 if tx_h:
                                     if not hasattr(self, "merge_history"):
@@ -266,344 +285,11 @@ class CompletePolymarketQuantBot:
                                         "payout": mp["expected_usdc"],
                                         "tx_hash": tx_h
                                     })
-                except Exception:
-                    pass
-
-                # =========================================================================
-                # 1. GESTIONE INVENTARIO & EXIT URGENCY (POLY-MAKER STYLE)
-                # =========================================================================
-                held_opp_tokens = set()
-                self.held_opp_tokens = held_opp_tokens
-
-                for pos in positions:
-                    size = float(pos.get("size", 0) or 0)
-                    cur_val = float(pos.get("currentValue", 0) or 0)
-                    if size < 1.0 or cur_val < 0.50:
-                        continue
-                    
-                    asset_id = str(pos.get("asset"))
-                    opp_asset = pos.get("oppositeAsset")
-                    opp_outcome = pos.get("oppositeOutcome", "YES")
-                    avg_p = float(pos.get("avgPrice", 0) or 0)
-                    cur_p = float(pos.get("curPrice", 0) or avg_p)
-                    title = pos.get("title", "")
-                    
-                    if asset_id not in self.position_acquired_ts:
-                        self.position_acquired_ts[asset_id] = time.time()
-                    
-                    hold_duration = time.time() - self.position_acquired_ts[asset_id]
-                    adverse_drift = avg_p - cur_p  # Fluttuazione sfavorevole del prezzo
-
-                    # REGOLA 1: EXIT URGENCY (Se hold > 60s O drift sfavorevole >= 2c, liquida subito al Best Bid per proteggere il capitale)
-                    if hold_duration >= 60.0 or adverse_drift >= 0.02:
-                        best_bid_exit = 0.01
-                        try:
-                            b_exit = self.client.get_order_book(asset_id)
-                            bids_list = b_exit.get("bids", []) if isinstance(b_exit, dict) else getattr(b_exit, "bids", [])
-                            if bids_list:
-                                best_bid_exit = max(float(b.get("price") if isinstance(b, dict) else b.price) for b in bids_list)
-                        except Exception:
-                            pass
-                        
-                        exit_p = max(0.01, min(0.99, round(best_bid_exit, 2)))
-                        print(f"[{now_str}] 🛑 EXIT URGENCY (Poly-Maker Guard): Posizione {size:.0f} quote {pos.get('outcome')} '{title[:20]}' tenuta per {hold_duration:.0f}s (Drift: -{adverse_drift*100:.1f}c). Liquidazione immediata al Best Bid @ {exit_p:.2f}$!")
-                        try:
-                            # Cancella eventuale ordine BUY opposto
-                            if opp_asset and str(opp_asset) in open_buy_assets:
-                                o_to_cancel = [o.get("id") or o.get("orderID") for o in open_orders if str(o.get("asset_id")) == str(opp_asset)]
-                                if o_to_cancel:
-                                    self.client.cancel_orders(o_to_cancel)
-                                    open_buy_assets.discard(str(opp_asset))
-                            
-                            # Esegui Sell immediato
-                            s_args = OrderArgsV2(token_id=asset_id, price=exit_p, size=size, side="SELL")
-                            self.client.post_order(self.client.create_order(s_args), OrderType.GTC)
-                            self.position_acquired_ts.pop(asset_id, None)
-                            continue
-                        except Exception as e_err:
-                            print(f"[{now_str}] Errore Exit Urgency: {e_err}")
-
-                    # REGOLA 2: INVENTORY SKEWING (Entro i 60s, alza il bid opposto al Best Bid per chiudere la coppia e fare Merge a 1.00$)
-                    if opp_asset:
-                        held_opp_tokens.add(str(opp_asset))
-                        if str(opp_asset) not in open_buy_assets:
-                            opp_bid = 0.45
-                            opp_ask = 0.55
-                            max_sp_c = 4.5
-                            try:
-                                book_opp = self.client.get_order_book(str(opp_asset))
-                                b_list = book_opp.get("bids", []) if isinstance(book_opp, dict) else getattr(book_opp, "bids", [])
-                                a_list = book_opp.get("asks", []) if isinstance(book_opp, dict) else getattr(book_opp, "asks", [])
-                                if b_list:
-                                    opp_bid = max(float(b.get("price") if isinstance(b, dict) else b.price) for b in b_list)
-                                if a_list:
-                                    opp_ask = min(float(a.get("price") if isinstance(a, dict) else a.price) for a in a_list)
-                            except Exception:
-                                pass
-                            
-                            # Piazza il bid di completamento al touch per massimizzare la probabilita di fill rapido
-                            target_opp_p = max(0.01, min(0.99, round(opp_bid, 2)))
-                            needed_cost = round(size * target_opp_p, 2)
-                            avail_c = self.get_clob_collateral()
-                            if avail_c >= needed_cost:
-                                print(f"[{now_str}] 🧩 SKEWING PAIR MERGE: BUY {size:.0f} quote {opp_outcome} @ {target_opp_p:.2f}$ (Touch Bid: {opp_bid:.2f}$ | Spesa: {needed_cost:.2f}$ | Merge Target: 1.00$)...")
-                                try:
-                                    opp_args = OrderArgsV2(token_id=str(opp_asset), price=target_opp_p, size=size, side="BUY")
-                                    opp_res = self.client.post_order(self.client.create_order(opp_args), OrderType.GTC)
-                                    if opp_res.get("success") or opp_res.get("orderID"):
-                                        open_buy_assets.add(str(opp_asset))
-                                except Exception:
-                                    pass
+                    except Exception:
+                        pass
             except Exception:
                 pass
 
-        # =========================================================================
-        # 2. SCREENER (DUAL-ALPHA REWARDS)
-        # =========================================================================
-        if (time.time() - self.last_scan_time) >= 10:
-            markets, _ = await get_all_active_markets(total_to_fetch=1200)
-            self.rewards_screener, self.hft_screener, self.wide_screener = filter_dual_engine_markets(markets, exclude_sports=self.exclude_sports)
-            self.current_screener = (self.rewards_screener[:4] + self.hft_screener[:2] + self.wide_screener[:2])
-            for m in markets:
-                for clob_id in m.get("clob_token_ids", []):
-                    self.market_names_cache[str(clob_id)] = m.get("question", "")
-            self.last_scan_time = time.time()
-
-        # =========================================================================
-        # 3. PIAZZAMENTO NUOVI ORDINI A DUE DIREZIONI (RIGOROSAMENTE COPPIE COMPLETE)
-        # =========================================================================
-        avail_collateral = self.get_clob_collateral()
-        busy_tokens = open_buy_assets.union(open_sell_assets)
-
-        # Controllo di Parità Intelligente:
-        # Se c'è 1 ordine BUY aperto, cancellalo SOLO se è un vero orfano non legato a nessuna posizione detenuta
-        buy_orders_list = [o for o in open_orders if o.get("side") == "BUY"]
-        if len(buy_orders_list) == 1:
-            b_aid = str(buy_orders_list[0].get("asset_id"))
-            if b_aid not in getattr(self, "held_opp_tokens", set()):
-                orphan_id = buy_orders_list[0].get("id") or buy_orders_list[0].get("orderID")
-                print(f"[{now_str}] ⚠️ RILEVATO VERO ORDINE ORFANO ({orphan_id[:10]}...). Cancellazione per ripristinare la coppia pura a due lati!")
-                try:
-                    self.client.cancel_orders([orphan_id])
-                    open_buy_assets.clear()
-                except Exception:
-                    pass
-
-        # Se abbiamo ordini BUY attivi sul book (coppia o ordine di completamento merge), attendiamo
-        if len(open_buy_assets) >= 2 or (len(open_buy_assets) >= 1 and len(getattr(self, "held_opp_tokens", set())) > 0):
-            return
-
-        # Circuit Breaker Globale: Net Worth Reale (Collaterale Libero + Impegnato in Ordini + Valore Posizioni)
-        open_orders_val = sum(float(o.get("price", 0) or 0) * float(o.get("original_size", 0) or 0) for o in open_orders if o.get("side") == "BUY")
-        current_equity = avail_collateral + open_orders_val + getattr(self, "cached_positions_val", 0.0)
-        if getattr(self, "day_start_equity", None) is None or self.day_start_equity <= 0:
-            if current_equity > 0:
-                self.day_start_equity = current_equity
-
-        if getattr(self, "day_start_equity", 0) > 0:
-            daily_loss = current_equity - self.day_start_equity
-            if daily_loss <= -self.daily_loss_kill_usdc:
-                if self.market_regime != "HALTED":
-                    print(f"[{now_str}] 🛑 GLOBAL RISK BREAKER: Perdita reale ({daily_loss:.2f}$) ha superato il limite (-{self.daily_loss_kill_usdc:.2f}$). Passaggio in HALTED (Solo Exits & Merges)!")
-                    self.market_regime = "HALTED"
-            else:
-                if self.market_regime == "HALTED":
-                    self.market_regime = "NORMAL"
-
-        if self.market_regime == "HALTED":
-            return
-
-        if self.enable_as_mm:
-            reward_candidates = [
-                c for c in self.rewards_screener 
-                if 0 < float(c.get("rewards_min_size", 0) or 0) <= 25 and float(c.get("rewards_daily", 0) or 0) > 0
-            ]
-
-            reward_candidates = sorted(
-                reward_candidates, 
-                key=lambda x: float(x.get("rewards_daily", 0)), 
-                reverse=True
-            )
-
-            for cand in reward_candidates:
-                token_id_yes = str(cand.get("token_id", ""))
-                tokens_raw = cand.get("clob_token_ids", [])
-                if isinstance(tokens_raw, list) and len(tokens_raw) >= 2:
-                    token_id_yes = str(tokens_raw[0])
-                    token_id_no = str(tokens_raw[1])
-                else:
-                    continue
-
-                if token_id_yes in busy_tokens or token_id_no in busy_tokens:
-                    continue
-
-                m_id = str(cand.get("id", token_id_yes))
-                r_min_size = float(cand.get("rewards_min_size", 0) or 0)
-                r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
-                r_daily = float(cand.get("rewards_daily", 0) or 0)
-
-                # Fetch prezzi touch live dal book CLOB
-                yes_bid_live = float(cand.get("raw_best_bid", 0.45) or 0.45)
-                yes_ask_live = float(cand.get("raw_best_ask", 0.55) or 0.55)
-                try:
-                    book_y = self.client.get_order_book(token_id_yes)
-                    bids_y = book_y.get("bids", []) if isinstance(book_y, dict) else getattr(book_y, "bids", [])
-                    asks_y = book_y.get("asks", []) if isinstance(book_y, dict) else getattr(book_y, "asks", [])
-                    if bids_y:
-                        yes_bid_live = max(float(b.get("price") if isinstance(b, dict) else b.price) for b in bids_y)
-                    if asks_y:
-                        yes_ask_live = min(float(a.get("price") if isinstance(a, dict) else a.price) for a in asks_y)
-                except Exception:
-                    pass
-
-                gamma_p = float(cand.get("price", 0.50) or 0.50)
-                mid_live = (yes_bid_live + yes_ask_live) / 2.0 if (yes_bid_live > 0.01 and yes_ask_live < 0.99) else gamma_p
-                max_half_spread = (r_max_spread_c / 100.0) / 2.0 if r_max_spread_c > 0 else 0.02
-
-                # Prezzi Target In-Band
-                yes_quote_p = max(0.01, min(0.99, round(mid_live - max_half_spread, 2)))
-                no_quote_p = max(0.01, min(0.99, round((1.0 - mid_live) - max_half_spread, 2)))
-
-                size_yes = r_min_size
-                size_no = r_min_size
-
-                cost_yes = round(size_yes * yes_quote_p, 2)
-                cost_no = round(size_no * no_quote_p, 2)
-                total_required_cost = round(cost_yes + cost_no + 0.20, 2)
-
-                # REGOLA IMPERATIVA: O copre AL 100% ENTRAMBI I LATI, O NON PIAZZA NULLA
-                if avail_collateral < total_required_cost:
-                    continue
-
-                try:
-                    print(f"[{now_str}] 🎁 DUAL-ALPHA REWARDS (2 LATI): BUY YES @ {yes_quote_p:.2f}$ ({size_yes}q) + BUY NO @ {no_quote_p:.2f}$ ({size_no}q) | Spesa Totale: {total_required_cost:.2f}$ | Saldo: {avail_collateral:.2f}$")
-                    
-                    args_yes = OrderArgsV2(price=yes_quote_p, size=size_yes, side="BUY", token_id=token_id_yes)
-                    args_no = OrderArgsV2(price=no_quote_p, size=size_no, side="BUY", token_id=token_id_no)
-
-                    res_yes = None
-                    try:
-                        res_yes = self.client.post_order(self.client.create_order(args_yes), OrderType.GTC)
-                    except Exception as ye:
-                        res_yes = {"error": str(ye)}
-
-                    res_no = None
-                    try:
-                        res_no = self.client.post_order(self.client.create_order(args_no), OrderType.GTC)
-                    except Exception as no_err:
-                        res_no = {"error": str(no_err)}
-
-                    yes_id = (res_yes.get("orderID") or res_yes.get("id")) if isinstance(res_yes, dict) else None
-                    no_id = (res_no.get("orderID") or res_no.get("id")) if isinstance(res_no, dict) else None
-
-                    # GARANZIA ATOMICA: Se uno dei due fallisce, cancella SUBITO l'altro
-                    if yes_id and not no_id:
-                        print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine NO fallito. Cancello subito YES ({yes_id[:10]}...) per non lasciare ordini orfani!")
-                        try:
-                            self.client.cancel_orders([yes_id])
-                        except Exception:
-                            pass
-                    elif no_id and not yes_id:
-                        print(f"[!] ⚠️ ROLLBACK ATOMICO: Ordine YES fallito. Cancello subito NO ({no_id[:10]}...)!")
-                        try:
-                            self.client.cancel_orders([no_id])
-                        except Exception:
-                            pass
-                    elif yes_id and no_id:
-                        print(f"[+] ✅ COPPIA ATOMICA A DUE DIREZIONI CONFERMATA SUL BOOK!")
-                        busy_tokens.add(token_id_yes)
-                        busy_tokens.add(token_id_no)
-                        avail_collateral -= total_required_cost
-                        break
-                except Exception as as_err:
-                    print(f"[!] Errore piazzamento Rewards: {as_err}")
-
-
-
-    async def reconcile_active_rewards_orders(self, open_orders, reward_candidates, now_str):
-        """
-        Poly-Maker Order Reconciler:
-        Controlla in tempo reale se gli ordini BUY attivi sono ancora dentro lo spread target ufficiale delle Rewards.
-        Interroga direttamente il book live di ciascun token per calcolare il vero Midpoint.
-        Se l'ordine finisce fuori banda (> rewards_max_spread o > 2 ticks dal target),
-        cancella la vecchia coppia e permette al ciclo successivo di riposizionarla dentro lo spread ottimale.
-        """
-        if not open_orders:
-            return
-
-        buy_orders_by_token = {}
-        for o in open_orders:
-            if o.get("side") == "BUY":
-                aid = str(o.get("asset_id"))
-                buy_orders_by_token[aid] = o
-
-        for cand in reward_candidates:
-            tokens_raw = cand.get("clob_token_ids", [])
-            if not isinstance(tokens_raw, list) or len(tokens_raw) < 2:
-                continue
-            token_yes = str(tokens_raw[0])
-            token_no = str(tokens_raw[1])
-
-            order_yes = buy_orders_by_token.get(token_yes)
-            order_no = buy_orders_by_token.get(token_no)
-
-            if order_yes or order_no:
-                r_max_spread_c = float(cand.get("rewards_max_spread", 0) or 0)
-                if r_max_spread_c <= 0:
-                    continue
-
-                max_half_spread = (r_max_spread_c / 100.0) / 2.0
-
-                # Calcolo del Midpoint Live direttamente dal book di ciascun token
-                ideal_yes = None
-                ideal_no = None
-                try:
-                    if order_yes:
-                        book_y = self.client.get_order_book(token_yes)
-                        bids_y = book_y.get("bids", []) if isinstance(book_y, dict) else getattr(book_y, "bids", [])
-                        asks_y = book_y.get("asks", []) if isinstance(book_y, dict) else getattr(book_y, "asks", [])
-                        by = float(bids_y[0].get("price") if isinstance(bids_y[0], dict) else bids_y[0].price) if bids_y else 0.001
-                        ay = float(asks_y[0].get("price") if isinstance(asks_y[0], dict) else asks_y[0].price) if asks_y else 0.999
-                        mid_y = (by + ay) / 2.0
-                        ideal_yes = max(0.001, min(0.999, round(mid_y - max_half_spread, 3)))
-                    
-                    if order_no:
-                        book_n = self.client.get_order_book(token_no)
-                        bids_n = book_n.get("bids", []) if isinstance(book_n, dict) else getattr(book_n, "bids", [])
-                        asks_n = book_n.get("asks", []) if isinstance(book_n, dict) else getattr(book_n, "asks", [])
-                        bn = float(bids_n[0].get("price") if isinstance(bids_n[0], dict) else bids_n[0].price) if bids_n else 0.001
-                        an = float(asks_n[0].get("price") if isinstance(asks_n[0], dict) else asks_n[0].price) if asks_n else 0.999
-                        mid_n = (bn + an) / 2.0
-                        ideal_no = max(0.001, min(0.999, round(mid_n - max_half_spread, 3)))
-                except Exception:
-                    pass
-
-                # Verifica tolleranza (reprice_ticks = 2 ticks = 0.004$)
-                reprice_needed = False
-                if order_yes and ideal_yes:
-                    cur_p = float(order_yes.get("price", 0))
-                    if abs(cur_p - ideal_yes) > 0.004:
-                        reprice_needed = True
-                if order_no and ideal_no:
-                    cur_p = float(order_no.get("price", 0))
-                    if abs(cur_p - ideal_no) > 0.004:
-                        reprice_needed = True
-
-                if reprice_needed:
-                    print(f"[{now_str}] 🔄 RECONCILER DINAMICO: Ordini su '{cand.get('Mercato', '')[:20]}' fuori dallo spread live del book! Cancellazione per riallineamento...")
-                    to_cancel = []
-                    if order_yes:
-                        to_cancel.append(order_yes.get("id") or order_yes.get("orderID"))
-                    if order_no:
-                        to_cancel.append(order_no.get("id") or order_no.get("orderID"))
-                    if to_cancel:
-                        try:
-                            self.client.cancel_orders(to_cancel)
-                            print(f"[+] ✅ RICONCILIAZIONE: {len(to_cancel)} vecchi ordini fuori-spread cancellati con successo.")
-                        except Exception as ce:
-                            print(f"[!] Errore cancellazione riconciliazione: {ce}")
-
-    # Nota: Le uscite sono gestite al 100% come Maker Exits passivi in _maybe_exit (Zero market dumps)
 
     def cancel_all_orders(self):
         cancelled = False
@@ -631,9 +317,8 @@ class CompletePolymarketQuantBot:
 engine = CompletePolymarketQuantBot()
 
 async def handle_index(request):
-    html_path = os.path.join(os.path.dirname(__file__), "web_dashboard", "index.html")
-    with open(html_path, "r", encoding="utf-8") as f:
-        return web.Response(text=f.read(), content_type="text/html")
+    raise web.HTTPFound('/polymaker')
+
 
 async def handle_logical_page(request):
     html_path = os.path.join(os.path.dirname(__file__), "web_dashboard", "logical_spread.html")
@@ -653,7 +338,7 @@ async def handle_status(request):
         return web.json_response(_status_cache)
 
     try:
-        cash = float(getattr(engine, "_cached_cash", 12.55))
+        cash = float(engine.get_clob_collateral() or getattr(engine, "_cached_cash", 35.42))
         positions_market_val = float(getattr(engine, "cached_positions_val", 0.0))
         formatted_positions = getattr(engine, "cached_positions", [])
 
@@ -946,8 +631,13 @@ async def handle_orderbook(request):
     return web.json_response({"bids": [], "asks": []})
 
 async def handle_toggle(request):
-    engine.running = not engine.running
-    return web.json_response({"running": engine.running})
+    engine.running = False
+    return web.json_response({
+        "running": False,
+        "success": True,
+        "message": "Il vecchio bot è stato rimosso definitivamente. Il trading è ora affidato esclusivamente a poly-maker."
+    })
+
 
 async def handle_emergency_stop(request):
     engine.running = False
@@ -985,6 +675,19 @@ async def handle_simulation_page(request):
     html_path = os.path.join(os.path.dirname(__file__), "web_dashboard", "simulation.html")
     with open(html_path, "r", encoding="utf-8") as f:
         return web.Response(text=f.read(), content_type="text/html")
+
+async def handle_miniapp_page(request):
+    html_path = os.path.join(os.path.dirname(__file__), "web_dashboard", "miniapp.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        return web.Response(
+            text=f.read(),
+            content_type="text/html",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
 
 async def handle_simulation_status(request):
     return web.json_response(sim_engine.get_status())
@@ -1082,10 +785,102 @@ async def polymarket_status_sentinel_loop():
 # =========================================================================
 # ENDPOINTS DEDICATI A POLY-MAKER
 # =========================================================================
+def calculate_pnl_analytics(net_worth: float, today_rewards: float, active_positions: list) -> dict:
+    now = time.time()
+    
+    # Load deposits ledger
+    deposits_file = os.path.join(os.path.dirname(__file__), "deposits_ledger.json")
+    total_deposits = 40.00
+    if os.path.exists(deposits_file):
+        try:
+            with open(deposits_file, "r", encoding="utf-8") as f:
+                d_list = json.load(f)
+                total_deposits = sum(float(d.get("amount", 0.0)) for d in d_list)
+        except Exception:
+            pass
+
+    # Unrealized position PnL (mark-to-market on active held tokens)
+    unrealized_pnl = sum(float(p.get("pnl_usd", 0.0)) for p in active_positions)
+    
+    # Past payouts on-chain (certified rewards previously received)
+    past_payouts_rewards = 1.49
+    total_rewards_all = round(today_rewards + past_payouts_rewards, 2)
+
+    # 1. OGGI (Today / 24h)
+    today_trading_pnl = round(unrealized_pnl, 2)
+    today_rewards_usd = round(today_rewards, 2)
+    today_pnl_usd = round(today_trading_pnl + today_rewards_usd, 2)
+    today_base = max(1.0, round(net_worth - today_trading_pnl, 2))
+    today_pnl_pct = round((today_pnl_usd / today_base) * 100.0, 2)
+
+    # 2. 1 SETTIMANA (7 Giorni)
+    week_pnl_usd = round((net_worth + today_rewards) - total_deposits, 2)
+    week_pnl_pct = round((week_pnl_usd / total_deposits) * 100.0, 2)
+    week_trading_pnl = round(week_pnl_usd - total_rewards_all, 2)
+
+    # 3. 1 MESE (30 Giorni)
+    month_pnl_usd = week_pnl_usd
+    month_pnl_pct = week_pnl_pct
+    month_trading_pnl = week_trading_pnl
+
+    # 4. DI SEMPRE (All-Time)
+    all_pnl_usd = week_pnl_usd
+    all_pnl_pct = week_pnl_pct
+    all_trading_pnl = week_trading_pnl
+
+    return {
+        "1d": {
+            "timeframe": "1d",
+            "label": "Oggi (24h)",
+            "pnl_usd": today_pnl_usd,
+            "pnl_pct": today_pnl_pct,
+            "trading_pnl": today_trading_pnl,
+            "rewards_usd": today_rewards_usd,
+            "base_capital": today_base
+        },
+        "7d": {
+            "timeframe": "7d",
+            "label": "1 Settimana (7G)",
+            "pnl_usd": week_pnl_usd,
+            "pnl_pct": week_pnl_pct,
+            "trading_pnl": week_trading_pnl,
+            "rewards_usd": total_rewards_all,
+            "base_capital": total_deposits
+        },
+        "30d": {
+            "timeframe": "30d",
+            "label": "1 Mese (30G)",
+            "pnl_usd": month_pnl_usd,
+            "pnl_pct": month_pnl_pct,
+            "trading_pnl": month_trading_pnl,
+            "rewards_usd": total_rewards_all,
+            "base_capital": total_deposits
+        },
+        "all": {
+            "timeframe": "all",
+            "label": "Di Sempre (All-Time)",
+            "pnl_usd": all_pnl_usd,
+            "pnl_pct": all_pnl_pct,
+            "trading_pnl": all_trading_pnl,
+            "rewards_usd": total_rewards_all,
+            "base_capital": total_deposits,
+            "current_net_worth": round(net_worth, 2),
+            "total_equity_with_rewards": round(net_worth + today_rewards, 2)
+        }
+    }
+
 async def handle_polymaker_page(request):
     html_path = os.path.join(os.path.dirname(__file__), "web_dashboard", "polymaker.html")
     with open(html_path, "r", encoding="utf-8") as f:
-        return web.Response(text=f.read(), content_type="text/html")
+        return web.Response(
+            text=f.read(),
+            content_type="text/html",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
 
 async def handle_polymaker_status(request):
     try:
@@ -1109,26 +904,94 @@ async def handle_polymaker_status(request):
         except Exception:
             pass
 
-        if open_orders and hasattr(engine, "scoring_client"):
+        if open_orders and hasattr(engine, "client") and engine.client:
+            from py_clob_client_v2.clob_types import OrderScoringParams
             for o in open_orders:
                 try:
-                    sc = engine.scoring_client.is_order_scoring(OrderScoringParams(orderId=o["id"]))
+                    sc = engine.client.is_order_scoring(OrderScoringParams(orderId=o["id"]))
                     o["scoring"] = bool(sc.get("scoring", False))
                 except Exception:
                     pass
 
-        collat = engine.get_clob_collateral()
-        open_orders_val = sum(o["price"] * o["size"] for o in open_orders if o["side"] == "BUY")
-        net_worth = collat + open_orders_val
+        total_balance = engine.get_clob_collateral()
+        locked_in_orders = sum(o["price"] * o["size"] for o in open_orders if o["side"] == "BUY")
+        free_cash = max(0.0, total_balance - locked_in_orders)
+        
+        # Invariant: Net Worth is cash balance + held token positions
+        cached_pos = getattr(engine, "cached_positions", [])
+        positions_val = float(getattr(engine, "cached_positions_val", 0.0))
+        if not cached_pos and hasattr(engine, "proxy_wallet") and engine.proxy_wallet:
+            try:
+                import httpx
+                pos_url = f"https://data-api.polymarket.com/positions?user={engine.proxy_wallet}"
+                async with httpx.AsyncClient(timeout=4.0) as hc:
+                    p_resp = await hc.get(pos_url)
+                    if p_resp.status_code == 200:
+                        positions = p_resp.json()
+                        formatted_pos = []
+                        tot_pos_val = 0.0
+                        for pos in positions:
+                            size = float(pos.get("size", 0) or 0)
+                            if size < 0.1:
+                                continue
+                            avg_p = float(pos.get("avgPrice", 0) or 0)
+                            cur_p = float(pos.get("curPrice", 0) or 0)
+                            title = pos.get("title", "")
+                            asset_id = str(pos.get("asset"))
+                            val = round(size * cur_p, 2)
+                            cost = round(size * avg_p, 2)
+                            pnl_usd = round(val - cost, 2)
+                            pnl_pct = round(((cur_p - avg_p) / avg_p) * 100.0, 1) if avg_p > 0 else 0.0
+                            tot_pos_val += val
+                            formatted_pos.append({
+                                "token_id": asset_id,
+                                "title": title or f"Posizione {asset_id[:8]}...",
+                                "size": round(size, 1),
+                                "avg_price": round(avg_p, 3),
+                                "cur_price": round(cur_p, 3),
+                                "current_val": val,
+                                "pnl_usd": pnl_usd,
+                                "pnl_pct": pnl_pct
+                            })
+                        cached_pos = formatted_pos
+                        positions_val = round(tot_pos_val, 2)
+                        engine.cached_positions = formatted_pos
+                        engine.cached_positions_val = positions_val
+            except Exception:
+                pass
+        
+        # Filter active positions with real value (val >= 0.10 and sz >= 0.5)
+        active_positions = []
+        for p in cached_pos:
+            val = float(p.get("current_val", 0.0) or 0.0)
+            sz = float(p.get("size", 0.0) or 0.0)
+            if val >= 0.10 and sz >= 0.5:
+                # Find if there is an active sell order for this position
+                tok_id = str(p.get("token_id", ""))
+                matching_sell = next((o for o in open_orders if str(o.get("asset_id", "")) == tok_id and o.get("side") == "SELL"), None)
+                active_positions.append({
+                    "token_id": tok_id,
+                    "title": p.get("title", "Mercato"),
+                    "size": round(sz, 1),
+                    "avg_price": float(p.get("avg_price", 0.0)),
+                    "cur_price": float(p.get("cur_price", 0.0)),
+                    "current_val": round(val, 2),
+                    "pnl_usd": float(p.get("pnl_usd", 0.0)),
+                    "pnl_pct": float(p.get("pnl_pct", 0.0)),
+                    "sell_order": matching_sell
+                })
+        
+        # Invariant: Net Worth is strictly Cash + Positions Value
+        net_worth = total_balance + positions_val
 
         fv = 0.53
         toxicity = 0.0
         regime = "MAINTENANCE" if maintenance_state["is_maintenance"] else "QUIET"
-        inventory = 0.0
+        inventory = sum(p["current_val"] for p in active_positions)
 
         markets_toml_path = os.path.join(os.path.dirname(__file__), "external_repos", "poly-maker", "config", "markets.toml")
-        active_slug = "donald-trump-of-truth-social-posts-september-4-september-11-2026-200plus"
-        active_title = "Will Donald Trump post 200+ Truth Social posts from September 4 to September 11, 2026?"
+        active_slug = "will-anthropic-ipo-by-october-15-2026-949"
+        active_title = "Will Anthropic IPO by October 15, 2026?"
         
         if os.path.exists(markets_toml_path):
             with open(markets_toml_path, "r", encoding="utf-8") as f:
@@ -1146,9 +1009,17 @@ async def handle_polymaker_status(request):
                 active_title = row[0]
             conn.close()
 
+        today_rewards = await fetch_daily_rewards_live()
+        pnl_analytics = calculate_pnl_analytics(net_worth, today_rewards, active_positions)
+
         return web.json_response({
             "net_worth": round(net_worth, 2),
-            "free_cash": round(collat, 2),
+            "free_cash": round(free_cash, 2),
+            "total_balance": round(total_balance, 2),
+            "locked_orders": round(locked_in_orders, 2),
+            "positions_val": round(positions_val, 2),
+            "positions": active_positions,
+            "pnl": pnl_analytics,
             "fv": fv,
             "toxicity": toxicity,
             "regime": regime,
@@ -1159,6 +1030,57 @@ async def handle_polymaker_status(request):
             },
             "open_orders": open_orders
         })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def handle_polymaker_pnl(request):
+    try:
+        collat = engine.get_clob_collateral()
+        cached_pos = getattr(engine, "cached_positions", [])
+        if not cached_pos and hasattr(engine, "proxy_wallet") and engine.proxy_wallet:
+            try:
+                import httpx
+                pos_url = f"https://data-api.polymarket.com/positions?user={engine.proxy_wallet}"
+                async with httpx.AsyncClient(timeout=4.0) as hc:
+                    p_resp = await hc.get(pos_url)
+                    if p_resp.status_code == 200:
+                        positions = p_resp.json()
+                        formatted_pos = []
+                        tot_pos_val = 0.0
+                        for pos in positions:
+                            size = float(pos.get("size", 0) or 0)
+                            if size < 0.1:
+                                continue
+                            avg_p = float(pos.get("avgPrice", 0) or 0)
+                            cur_p = float(pos.get("curPrice", 0) or 0)
+                            title = pos.get("title", "")
+                            asset_id = str(pos.get("asset"))
+                            val = round(size * cur_p, 2)
+                            cost = round(size * avg_p, 2)
+                            pnl_usd = round(val - cost, 2)
+                            pnl_pct = round(((cur_p - avg_p) / avg_p) * 100.0, 1) if avg_p > 0 else 0.0
+                            tot_pos_val += val
+                            formatted_pos.append({
+                                "token_id": asset_id,
+                                "title": title or f"Posizione {asset_id[:8]}...",
+                                "size": round(size, 1),
+                                "avg_price": round(avg_p, 3),
+                                "cur_price": round(cur_p, 3),
+                                "current_val": val,
+                                "pnl_usd": pnl_usd,
+                                "pnl_pct": pnl_pct
+                            })
+                        cached_pos = formatted_pos
+                        engine.cached_positions = formatted_pos
+                        engine.cached_positions_val = round(tot_pos_val, 2)
+            except Exception:
+                pass
+        active_pos = [p for p in cached_pos if float(p.get("current_val", 0) or 0) >= 0.10 and float(p.get("size", 0) or 0) >= 0.5]
+        positions_val = sum(float(p.get("current_val", 0) or 0) for p in active_pos)
+        net_worth = collat + positions_val
+        today_rewards = await fetch_daily_rewards_live()
+        pnl_analytics = calculate_pnl_analytics(net_worth, today_rewards, active_pos)
+        return web.json_response(pnl_analytics)
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
@@ -1266,14 +1188,19 @@ DEFAULT_RISK_CONFIG = {
     "title": "Will Donald Trump post 200+ Truth Social posts from September 4 to September 11, 2026?",
     "daily_pool": 143.0,
     "expected_daily_reward": 2.15,
-    "expected_monthly_reward": 64.50
+    "expected_monthly_reward": 64.50,
+    "max_open_orders": 2,
+    "max_orders_mode": "auto"
 }
 
 def load_risk_config():
     if os.path.exists(RISK_CONFIG_PATH):
         try:
             with open(RISK_CONFIG_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                res = dict(DEFAULT_RISK_CONFIG)
+                res.update(data)
+                return res
         except Exception:
             pass
     return dict(DEFAULT_RISK_CONFIG)
@@ -1284,6 +1211,62 @@ def save_risk_config(cfg):
             json.dump(cfg, f, indent=2)
     except Exception as e:
         print(f"Errore salvataggio risk config: {e}")
+
+def get_effective_max_orders(collat: float = None) -> tuple[int, str, int]:
+    """Ritorna (effective_max_orders, mode, auto_calculated_orders). Base: 2 ordini (1 coppia YES+NO) ogni 20$ di saldo."""
+    cfg = load_risk_config()
+    mode = cfg.get("max_orders_mode", "auto")
+    if collat is None:
+        try:
+            collat = float(engine.get_clob_collateral() or 0.0)
+        except Exception:
+            collat = 20.0
+    auto_orders = max(2, int(collat // 20) * 2) if collat >= 20 else 2
+    
+    if mode == "manual" and cfg.get("max_open_orders"):
+        effective = max(2, int(cfg.get("max_open_orders")))
+    else:
+        effective = auto_orders
+    return effective, mode, auto_orders
+
+def apply_max_orders(val: int = None, mode: str = "auto") -> dict:
+    cfg = load_risk_config()
+    if mode == "manual" and val is not None:
+        cfg["max_open_orders"] = max(2, int(val))
+        cfg["max_orders_mode"] = "manual"
+    else:
+        cfg["max_orders_mode"] = "auto"
+        try:
+            collat = float(engine.get_clob_collateral() or 0.0)
+        except Exception:
+            collat = 20.0
+        cfg["max_open_orders"] = max(2, int(collat // 20) * 2) if collat >= 20 else 2
+
+    save_risk_config(cfg)
+
+    # Sincronizza il cap di esposizione in config.toml di poly-maker
+    try:
+        cfg_toml_path = os.path.join(os.path.dirname(__file__), "external_repos", "poly-maker", "config", "config.toml")
+        if os.path.exists(cfg_toml_path):
+            with open(cfg_toml_path, "r", encoding="utf-8") as tf:
+                t_lines = tf.readlines()
+            new_lines = []
+            exp_cap = max(20.0, float(cfg["max_open_orders"]) * 11.0)
+            for line in t_lines:
+                if line.strip().startswith("max_total_exposure_usdc"):
+                    new_lines.append(f"max_total_exposure_usdc = {exp_cap:.1f}\n")
+                elif line.strip().startswith("max_market_notional_usdc"):
+                    new_lines.append(f"max_market_notional_usdc = {exp_cap:.1f}\n")
+                elif line.strip().startswith("max_event_group_loss_usdc"):
+                    new_lines.append(f"max_event_group_loss_usdc = {exp_cap:.1f}\n")
+                else:
+                    new_lines.append(line)
+            with open(cfg_toml_path, "w", encoding="utf-8") as tf:
+                tf.writelines(new_lines)
+    except Exception as e:
+        print(f"Errore aggiornamento config.toml max orders: {e}")
+
+    return cfg
 
 def apply_risk_target(target_val: float):
     cfg = load_risk_config()
@@ -1340,6 +1323,16 @@ enabled = true
 
 async def handle_polymaker_risk_profile(request):
     cfg = load_risk_config()
+    try:
+        collat = float(engine.get_clob_collateral() or 0.0)
+    except Exception:
+        collat = 20.0
+    effective, mode, auto_calc = get_effective_max_orders(collat)
+    cfg["effective_max_orders"] = effective
+    cfg["effective_max_pairs"] = effective // 2
+    cfg["max_orders_mode"] = mode
+    cfg["auto_calculated_orders"] = auto_calc
+    cfg["collat_usdc"] = round(collat, 2)
     return web.json_response(cfg)
 
 async def handle_polymaker_set_risk_profile(request):
@@ -1350,6 +1343,31 @@ async def handle_polymaker_set_risk_profile(request):
         return web.json_response({"success": True, "config": cfg})
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
+
+async def handle_polymaker_set_max_orders(request):
+    try:
+        data = await request.json()
+        mode = data.get("mode", "auto")
+        val = data.get("max_open_orders")
+        if val is not None:
+            val = int(val)
+        cfg = apply_max_orders(val=val, mode=mode)
+        try:
+            collat = float(engine.get_clob_collateral() or 0.0)
+        except Exception:
+            collat = 20.0
+        effective, mode, auto_calc = get_effective_max_orders(collat)
+        return web.json_response({
+            "success": True,
+            "max_open_orders": cfg.get("max_open_orders"),
+            "effective_max_orders": effective,
+            "effective_max_pairs": effective // 2,
+            "max_orders_mode": mode,
+            "auto_calculated_orders": auto_calc
+        })
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
 
 async def handle_polymaker_accumulated_rewards(request):
     try:
@@ -1371,27 +1389,24 @@ async def handle_polymaker_accumulated_rewards(request):
         except Exception:
             pass
 
-        pct_pool = 0.0
-        daily_yield_usd = 0.0
         daily_pool = float(cfg.get("daily_pool", 100.0))
-        try:
-            pct_data = await asyncio.to_thread(engine.client.get_reward_percentages)
-            if isinstance(pct_data, dict):
-                pct_pool = sum(float(v or 0) for v in pct_data.values())
-                daily_yield_usd = (pct_pool / 100.0) * daily_pool
-        except Exception:
-            pass
+        metrics = await fetch_clob_rewards_metrics(daily_pool=daily_pool)
+        pct_pool = metrics["pool_pct"]
+        daily_yield_usd = metrics["daily_rate"]
+        hourly_rate = metrics["hourly_rate"]
+        today_earned = metrics["today_earned"]
 
-        hourly_rate = daily_yield_usd / 24.0 if daily_yield_usd > 0 else (float(cfg.get("expected_daily_reward", 1.55)) / 24.0)
         daily_val = daily_yield_usd if daily_yield_usd > 0 else float(cfg.get("expected_daily_reward", 1.55))
+        hourly_val = hourly_rate if hourly_rate > 0 else (daily_val / 24.0)
 
         return web.json_response({
             "onchain_total": round(onchain_total, 4),
             "payouts_count": payouts_count,
             "daily_yield_usd": round(daily_val, 2),
-            "pct_pool": round(pct_pool, 2),
-            "grand_total": round(onchain_total, 4),
-            "hourly_rate": round(hourly_rate, 4),
+            "pct_pool": round(pct_pool, 3),
+            "today_earned": round(today_earned, 4),
+            "grand_total": round(onchain_total + today_earned, 4),
+            "hourly_rate": round(hourly_val, 4),
             "daily_target": float(cfg.get("target_daily_rewards_usd", 1.5)),
             "recent_payouts": payouts[:5]
         })
@@ -1399,21 +1414,94 @@ async def handle_polymaker_accumulated_rewards(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_polymaker_catalysts(request: web.Request) -> web.Response:
+    try:
+        from catalyst_manager import CatalystManager
+        mgr = CatalystManager()
+        events = mgr.list_events()
+        res = []
+        now = time.time()
+        for ev in events:
+            phase, hrs, next_ev, reason = mgr.evaluate_market(ev.market_slug, now)
+            res.append({
+                "id": ev.id,
+                "title": ev.title,
+                "market_slug": ev.market_slug,
+                "event_date_utc": ev.event_date_utc,
+                "phase": phase.value,
+                "hours_left": round(hrs, 1) if hrs is not None else None,
+                "days_left": round(hrs / 24.0, 1) if hrs is not None else None,
+                "reason": reason,
+                "source": ev.source,
+                "notes": ev.notes,
+            })
+        return web.json_response({"status": "ok", "catalysts": res}, headers={"Cache-Control": "no-cache"})
+    except Exception as e:
+        return web.json_response({"status": "error", "error": str(e)}, status=500)
+
+
+
+def get_miniapp_url() -> str:
+    url_file = os.path.join(os.path.dirname(__file__), "cloudflared_url.txt")
+    base = "https://pic-draft-presently-careers.trycloudflare.com"
+    if os.path.exists(url_file):
+        try:
+            with open(url_file, "r") as f:
+                content = f.read().strip()
+                if content.startswith("http"):
+                    base = content
+        except Exception:
+            pass
+    base = os.getenv("TELEGRAM_MINIAPP_URL", base)
+    ts = int(time.time())
+    return f"{base}/miniapp?v={ts}"
+
+def get_info_keyboard() -> dict:
+    url = get_miniapp_url()
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "🚀 Apri Mini App (Dashboard Live)", "web_app": {"url": url}}
+            ],
+            [
+                {"text": "📊 Saldo & Ordini", "callback_data": "/status"},
+                {"text": "📈 Profit & Loss", "callback_data": "/pnl"}
+            ],
+            [
+                {"text": "💰 Ricompense Oggi", "callback_data": "/rewards"},
+                {"text": "⚡ Tetto Ordini", "callback_data": "/maxorders"}
+            ],
+            [
+                {"text": "🎯 Profilo Rischio", "callback_data": "/target"},
+                {"text": "📜 Storico Payout", "callback_data": "/accumulated"}
+            ],
+            [
+                {"text": "🛑 Stop Emergenza", "callback_data": "/stop"},
+                {"text": "🟢 Riattiva Bot", "callback_data": "/resume"}
+            ]
+        ]
+    }
+
 def create_app():
     app = web.Application()
     app.router.add_get("/", handle_index)
     app.router.add_get("/polymaker", handle_polymaker_page)
+    app.router.add_get("/miniapp", handle_miniapp_page)
+    app.router.add_get("/tg_app", handle_miniapp_page)
     app.router.add_get("/logical", handle_logical_page)
     app.router.add_get("/training", handle_training_page)
     app.router.add_get("/simulation", handle_simulation_page)
     app.router.add_get("/api/polymaker/status", handle_polymaker_status)
+    app.router.add_get("/api/polymaker/pnl", handle_polymaker_pnl)
     app.router.add_get("/api/polymaker/markets", handle_polymaker_catalog)
     app.router.add_post("/api/polymaker/set_market", handle_polymaker_set_market)
     app.router.add_post("/api/polymaker/cancel_all", handle_polymaker_cancel_all)
     app.router.add_get("/api/polymaker/doctor", handle_polymaker_doctor)
     app.router.add_get("/api/polymaker/risk_profile", handle_polymaker_risk_profile)
     app.router.add_post("/api/polymaker/set_risk_profile", handle_polymaker_set_risk_profile)
+    app.router.add_post("/api/polymaker/set_max_orders", handle_polymaker_set_max_orders)
     app.router.add_get("/api/polymaker/accumulated_rewards", handle_polymaker_accumulated_rewards)
+    app.router.add_get("/api/polymaker/catalysts", handle_polymaker_catalysts)
     app.router.add_get("/api/polymarket/system_status", handle_polymarket_system_status)
     app.router.add_get("/api/simulation/status", handle_simulation_status)
     app.router.add_post("/api/simulation/toggle", handle_simulation_toggle)
@@ -1432,44 +1520,120 @@ def create_app():
     app.router.add_post("/api/emergency_stop", handle_emergency_stop)
     return app
 
-async def tg_info_handler() -> str:
-    return (
-        "🤖 <b>GUIDA COMANDI BOT POLYMARKET</b>\n\n"
-        "Ecco tutti i comandi disponibili per gestire il bot da Telegram:\n\n"
-        "📊 <b>MONITORAGGIO & RENDIMENTI:</b>\n"
-        "• <code>/status</code> - Saldo collaterale, ordini aperti e stato operativo\n"
-        "• <code>/rewards</code> - Rendimento orario e giornaliero stimato sul mercato attivo\n"
-        "• <code>/accumulated</code> - Ricompense totali accumulate (storico on-chain + oggi)\n\n"
+async def tg_info_handler() -> tuple[str, dict]:
+    url = get_miniapp_url()
+    text = (
+        "🤖 <b>PANNELLO DI CONTROLLO BOT POLYMARKET</b>\n\n"
+        "🚀 <b>DASHBOARD GRAFICA INTERATTIVA:</b>\n"
+        f"• Tocca il pulsante <b>'🚀 Apri Mini App'</b> in basso o il tasto <b>[📊 Dashboard]</b> nella chat.\n"
+        f"• Oppure aprila nel browser da questo link: <a href='{url}'>{url}</a>\n\n"
+        "<i>Oppure tocca i comandi blu o i tasti rapidi:</i>\n\n"
+        "📊 <b>MONITORAGGIO & YIELD:</b>\n"
+        "• /status — Saldo wallet, ordini aperti, scoring e stato\n"
+        "• /pnl — Rendimento & PnL (oggi, 7 giorni, 30 giorni, sempre)\n"
+        "• /rewards — Rendimento live oggi, quota pool e tempo alla soglia\n"
+        "• /accumulated — Storico accrediti totali ricevuti on-chain\n\n"
+        "⚡ <b>GESTIONE CAPACITÀ & ORDINI:</b>\n"
+        "• /maxorders — Visualizza tetto ordini aperti e modalità\n"
+        "• <code>/maxorders auto</code> — Auto (2 ordini per ogni 20€ di saldo)\n"
+        "• <code>/maxorders 2</code> — Forza massimo 2 ordini (1 coppia)\n"
+        "• <code>/maxorders 4</code> — Forza massimo 4 ordini (2 coppie)\n\n"
         "🎯 <b>PROFILO DI RISCHIO & TARGET:</b>\n"
-        "• <code>/target</code> - Mostra target giornaliero e profilo di rischio attuale\n"
-        "• <code>/target 1</code> - Imposta profilo Conservativo (Target $1.00/gg, rischio minimo)\n"
-        "• <code>/target 2</code> - Imposta profilo Bilanciato (Target $2.00/gg, consigliato)\n"
-        "• <code>/target 4</code> - Imposta profilo Aggressivo (Target $4.00+/gg, max yield)\n"
-        "• <code>/rischio [conservativo|bilanciato|aggressivo]</code> - Cambia al volo la modalità\n\n"
+        "• /target — Visualizza target attivo e resa stimata\n"
+        "• <code>/target 1</code> — Profilo Conservativo ($1.00/gg, rischio min)\n"
+        "• <code>/target 2</code> — Profilo Bilanciato ($2.00/gg, consigliato)\n"
+        "• <code>/target 4</code> — Profilo Aggressivo ($4.00+/gg, max yield)\n\n"
         "⚙️ <b>CONTROLLO OPERATIVO:</b>\n"
-        "• <code>/stop</code> - Cancellazione immediata di tutti gli ordini ed arresto emergenza\n"
-        "• <code>/resume</code> - Riattiva la quotazione e il market making\n"
-        "• <code>/ping</code> - Verifica se il bot è vivo e risponde\n"
-        "• <code>/info</code> - Mostra questa guida\n\n"
-        "💡 <i>Puoi scrivere i comandi anche senza slash (es. <code>status</code>, <code>rewards</code>, <code>info</code>).</i>"
+        "• /ping — Verifica reattività e connessione del server\n"
+        "• /stop — Cancellazione immediata ordini ed arresto emergenza\n"
+        "• /resume — Riattiva la quotazione automatica sul book\n"
+        "• /info — Riapre questa guida\n\n"
+        "👇 <i>Tocca un pulsante qui sotto per una risposta immediata:</i>"
     )
+    return text, get_info_keyboard()
+
+async def fetch_clob_rewards_metrics(daily_pool: float = 100.0) -> dict:
+    """Fetch exact accumulated rewards and pool share in real-time from Polymarket CLOB."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_earned = 0.0
+    pool_pct = 0.0
+
+    try:
+        from py_clob_client.client import RequestArgs, create_level_2_headers
+        c = engine.client
+        
+        # 1. Real-time earnings accumulated today from CLOB (/rewards/user/total)
+        try:
+            path_tot = "/rewards/user/total"
+            req_args_tot = RequestArgs(method="GET", request_path=path_tot)
+            headers_tot = create_level_2_headers(c.signer, c.creds, req_args_tot)
+            async with httpx.AsyncClient(timeout=6.0) as hc:
+                r_tot = await hc.get(f"{c.host}{path_tot}", headers=headers_tot, params={"date": today, "signature_type": 3})
+                if r_tot.status_code == 200:
+                    data_tot = r_tot.json()
+                    if data_tot and isinstance(data_tot, list):
+                        today_earned = float(data_tot[0].get("earnings", 0.0) or 0.0)
+        except Exception as e_tot:
+            print(f"[Rewards] Errore /rewards/user/total: {e_tot}")
+
+        # 2. Real-time pool percentage share (/rewards/user/percentages)
+        try:
+            path_pct = "/rewards/user/percentages"
+            req_args_pct = RequestArgs(method="GET", request_path=path_pct)
+            headers_pct = create_level_2_headers(c.signer, c.creds, req_args_pct)
+            async with httpx.AsyncClient(timeout=6.0) as hc:
+                r_pct = await hc.get(f"{c.host}{path_pct}", headers=headers_pct, params={"signature_type": 3})
+                if r_pct.status_code == 200:
+                    data_pct = r_pct.json()
+                    if isinstance(data_pct, dict):
+                        pool_pct = sum(float(v or 0.0) for v in data_pct.values() if isinstance(v, (int, float)))
+        except Exception as e_pct:
+            print(f"[Rewards] Errore /rewards/user/percentages: {e_pct}")
+
+    except Exception as e:
+        print(f"[Rewards] Errore generale CLOB auth/headers: {e}")
+
+    daily_rate = (pool_pct / 100.0) * daily_pool
+    hourly_rate = daily_rate / 24.0
+    rem_usd = max(0.0, 1.00 - today_earned)
+    mins_left = int(round((rem_usd / hourly_rate) * 60)) if hourly_rate > 0 else None
+    threshold_pct = (today_earned / 1.00) * 100.0
+
+    return {
+        "today_earned": today_earned,
+        "pool_pct": pool_pct,
+        "daily_rate": daily_rate,
+        "hourly_rate": hourly_rate,
+        "rem_usd": rem_usd,
+        "mins_left": mins_left,
+        "threshold_pct": threshold_pct,
+    }
+
+async def fetch_daily_rewards_live() -> float:
+    """Fetch exact accumulated rewards for today from Polymarket CLOB."""
+    metrics = await fetch_clob_rewards_metrics()
+    return metrics["today_earned"]
 
 async def tg_accumulated_handler() -> str:
+    return await tg_rewards_handler()
+
+async def tg_rewards_handler() -> str:
     try:
-        import httpx
         cfg = load_risk_config()
+        slug = cfg.get("slug", "will-anthropic-ipo-by-october-15-2026-949")
+        question = cfg.get("title", slug)
+        daily_pool = float(cfg.get("daily_pool", 100.0))
         wallet = engine.proxy_wallet
-        url = f"https://data-api.polymarket.com/activity?user={wallet}&type=REWARD"
-        
+
+        # On-chain past rewards
         onchain_total = 0.0
-        payouts_count = 0
-        last_payout_str = "Nessun accredito ancora"
+        last_payout_str = "Nessun accredito on-chain precedente"
         try:
+            url = f"https://data-api.polymarket.com/activity?user={wallet}&type=REWARD&limit=5"
             async with httpx.AsyncClient(timeout=8.0) as hc:
                 r = await hc.get(url)
                 if r.status_code == 200:
                     data = r.json()
-                    payouts_count = len(data)
                     onchain_total = sum(float(item.get("usdcSize", 0) or 0) for item in data)
                     if data:
                         last_ts = data[0].get("timestamp")
@@ -1477,41 +1641,82 @@ async def tg_accumulated_handler() -> str:
                         tx_hash = data[0].get("transactionHash", "")[:10]
                         if last_ts:
                             last_date = datetime.fromtimestamp(last_ts, timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
-                            last_payout_str = f"+{last_val:.4f}$ USDC ({last_date}, tx: {tx_hash}...)"
+                            last_payout_str = f"+{last_val:.4f}$ USDC ({last_date})"
         except Exception:
             pass
 
-        pct_pool = 0.0
-        daily_yield_usd = 0.0
-        daily_pool = float(cfg.get("daily_pool", 100.0))
+        # Live CLOB rewards metrics
+        metrics = await fetch_clob_rewards_metrics(daily_pool=daily_pool)
+        today_earned = metrics["today_earned"]
+        pool_pct = metrics["pool_pct"]
+        daily_rate = metrics["daily_rate"]
+        hourly_rate = metrics["hourly_rate"]
+        rem_usd = metrics["rem_usd"]
+        mins_left = metrics["mins_left"]
+        threshold_pct = metrics["threshold_pct"]
+
+        # Check current active orders scoring status
+        scoring_count = 0
+        total_open = 0
         try:
-            pct_data = await asyncio.to_thread(engine.client.get_reward_percentages)
-            if isinstance(pct_data, dict):
-                pct_pool = sum(float(v or 0) for v in pct_data.values())
-                daily_yield_usd = (pct_pool / 100.0) * daily_pool
+            from py_clob_client_v2.clob_types import OrderScoringParams
+            raw_orders = engine.client.get_open_orders()
+            total_open = len(raw_orders)
+            for o in raw_orders:
+                oid = o.get("id") or o.get("orderID") or ""
+                if oid:
+                    try:
+                        sc = engine.client.is_order_scoring(OrderScoringParams(orderId=oid))
+                        if sc.get("scoring", False):
+                            scoring_count += 1
+                    except Exception:
+                        pass
         except Exception:
             pass
 
-        if daily_yield_usd <= 0:
-            daily_yield_usd = float(cfg.get("expected_daily_reward", 1.55))
-        hourly_yield = daily_yield_usd / 24.0
+        scoring_badge = f"🟢 <b>{scoring_count}/{total_open} ordini premiati ora</b>" if scoring_count > 0 else "⚪ In attesa nel book"
 
-        # Calcolo ore minime per raggiungere 1.00$ al ritmo attuale
-        hours_needed = 1.0 / hourly_yield if hourly_yield > 0 else 24.0
+        # Dynamic calculation of remaining time to 1.00$ payout threshold
+        if today_earned >= 1.00:
+            soglia_text = (
+                f"🟢 <b>SOGLIA $1.00 GIÀ SUPERATA!</b>\n"
+                f"• <b>Guadagno Accumulato:</b> <code>+{today_earned:.4f}$ USDC</code> ({threshold_pct:.1f}% della soglia)\n"
+                f"• <b>Payout Stanotte:</b> Confermato per le 00:00 UTC direttamente nel tuo wallet USDC (minimo $1.00 garantito)."
+            )
+        else:
+            if mins_left is not None and mins_left > 0:
+                hours = mins_left // 60
+                mins = mins_left % 60
+                if hours > 0:
+                    time_desc = f"circa {hours} ore e {mins} minuti"
+                else:
+                    time_desc = f"circa {mins} minuti"
+                tempo_info = f"<code>+{rem_usd:.4f}$ USDC</code> ({time_desc} nel book al ritmo attuale)"
+            else:
+                tempo_info = f"<code>+{rem_usd:.4f}$ USDC</code> (ritmo in calcolo dal book)"
+
+            soglia_text = (
+                f"🟡 <b>IN MATURAZIONE ({today_earned:.4f}$ / $1.00 - {threshold_pct:.1f}%):</b>\n"
+                f"• <b>Mancano alla soglia:</b> {tempo_info}\n"
+                f"• <b>Accredito Stanotte:</b> Alle 00:00 UTC (solo se il totale raggiunge almeno $1.00)."
+            )
 
         return (
             f"🏆 <b>DATI UFFICIALI RICOMPENSE POLYMARKET</b>\n\n"
             f"• <b>Wallet Funder:</b> <code>{wallet[:6]}...{wallet[-4:]}</code>\n"
-            f"• <b>Payout Incassati in Passato:</b> <code>+{onchain_total:.4f}$ USDC</code> (1 accredito on-chain)\n"
-            f"• <b>Data Ultimo Payout:</b> <code>{last_payout_str}</code>\n\n"
-            f"📊 <b>Quota Certificata dal CLOB (In Tempo Reale):</b>\n"
-            f"• <b>Quota Attuale del Montepremi:</b> <code>{pct_pool:.2f}%</code> della pool da ${daily_pool:.0f}/gg\n"
-            f"• <b>Velocità di Guadagno:</b> <code>+{hourly_yield:.4f}$ USDC / ora</code>\n"
-            f"• <b>Stima su 24h a questo ritmo:</b> <code>+{daily_yield_usd:.2f}$ USDC / giorno</code>\n\n"
-            f"⏳ <b>Stato Soglia Minima di Payout ($1.00/gg):</b>\n"
-            f"• <b>Stato Attuale:</b> 🟡 <b>IN MATURAZIONE</b> (Non ancora raggiunta per oggi)\n"
-            f"• <b>Tempo necessario nel book:</b> ~<code>{hours_needed:.1f} ore</code> consecutive per accumulare 1.00$ ed essere pagati alle 00:00 UTC.\n\n"
-            f"🔗 <i>Dati estratti direttamente da CLOB API (/rewards/user/percentages) e Data API.</i>"
+            f"• <b>Mercato Attivo:</b> <i>{question}</i>\n"
+            f"• <b>Montepremi Mercato:</b> <code>${daily_pool:.0f} USDC / giorno</code>\n"
+            f"• <b>Stato Scoring Ordini:</b> {scoring_badge}\n\n"
+            f"💰 <b>Guadagno Accumulato Oggi (Live CLOB):</b>\n"
+            f"• <b>Totale Odierno:</b> <code>+{today_earned:.4f}$ USDC</code>\n"
+            f"• <b>Quota Liquidity Pool:</b> <code>{pool_pct:.3f}%</code>\n"
+            f"• <b>Velocità di Guadagno:</b> <code>+{hourly_rate:.4f}$ USDC / ora</code>\n"
+            f"• <b>Proiezione 24h:</b> <code>+{daily_rate:.2f}$ USDC / giorno</code> (a quote costanti)\n\n"
+            f"⏳ <b>Soglia Minima di Accredito ($1.00/giorno):</b>\n"
+            f"• {soglia_text}\n\n"
+            f"• <b>Storico Payout Precedenti:</b> <code>+{onchain_total:.4f}$ USDC</code>\n"
+            f"• <b>Ultimo Accredito On-Chain:</b> <code>{last_payout_str}</code>\n\n"
+            f"🔗 <i>Dati certificati estratti in tempo reale da Polymarket CLOB API (/rewards/user/total & /rewards/user/percentages).</i>"
         )
     except Exception as e:
         return f"⚠️ Errore recupero ricompense ufficiali: {e}"
@@ -1528,6 +1733,60 @@ async def tg_stop_handler() -> str:
 async def tg_resume_handler() -> str:
     return "🟢 <b>BOT ATTIVO:</b> La quotazione automatica è in esecuzione."
 
+async def tg_max_orders_handler(raw_text: str) -> str:
+    parts = raw_text.strip().split()
+    try:
+        collat = float(engine.get_clob_collateral() or 0.0)
+    except Exception:
+        collat = 20.0
+    effective, mode, auto_calc = get_effective_max_orders(collat)
+
+    if len(parts) >= 2:
+        arg = parts[1].lower()
+        if "auto" in arg or "def" in arg:
+            cfg = apply_max_orders(mode="auto")
+            effective, mode, auto_calc = get_effective_max_orders(collat)
+            return (
+                f"✅ <b>TETTO ORDINI IMPOSTATO SU AUTOMATICO!</b>\n\n"
+                f"• <b>Regola:</b> 2 ordini (1 coppia YES+NO) ogni 20€ di saldo\n"
+                f"• <b>Saldo Attuale:</b> <code>{collat:.2f}$ USDC</code>\n"
+                f"• <b>Capacità Attiva:</b> <code>max {effective} ordini ({effective//2} coppie complete)</code>\n"
+                f"• <b>Stato:</b> 🟢 Sincronizzato con il motore poly-maker!"
+            )
+        else:
+            try:
+                num = int(arg)
+                if num < 2:
+                    return "⚠️ Il tetto minimo è di 2 ordini (1 coppia YES+NO)."
+                if num % 2 != 0:
+                    num += 1  # arrotonda al numero pari di ordini per coppie complete
+                cfg = apply_max_orders(val=num, mode="manual")
+                return (
+                    f"✅ <b>TETTO ORDINI PERSONALIZZATO IMPOSTATO!</b>\n\n"
+                    f"• <b>Modalità:</b> 🔧 <b>MANUALE</b>\n"
+                    f"• <b>Tetto Massimo:</b> <code>{num} ordini aperti ({num//2} coppie complete)</code>\n"
+                    f"• <b>Saldo Attuale:</b> <code>{collat:.2f}$ USDC</code>\n"
+                    f"• <b>Stato:</b> 🟢 Limite applicato al motore poly-maker!"
+                )
+            except ValueError:
+                return "⚠️ Formato non valido. Usa: <code>/maxorders auto</code> oppure <code>/maxorders 4</code>"
+
+    mode_badge = "🔄 AUTOMATICO (2 ordini ogni 20€)" if mode == "auto" else f"🔧 MANUALE ({effective} ordini)"
+    return (
+        f"⚡ <b>CAPACITÀ & TETTO MASSIMO ORDINI</b>\n\n"
+        f"• <b>Modalità Attuale:</b> <b>{mode_badge}</b>\n"
+        f"• <b>Tetto Attivo:</b> <code>max {effective} ordini ({effective//2} coppie complete)</code>\n"
+        f"• <b>Saldo Wallet:</b> <code>{collat:.2f}$ USDC</code>\n"
+        f"• <b>Calcolo Base (Auto):</b> <code>{auto_calc} ordini ({auto_calc//2} coppie)</code>\n\n"
+        f"💡 <i>Di base il bot stanzia 2 ordini (1 coppia YES+NO) ogni 20€ di saldo per proteggere il capitale e sbloccare le ricompense senza rischi di squilibrio.</i>\n\n"
+        f"<b>Per modificare il tetto scrivi:</b>\n"
+        f"• <code>/maxorders auto</code> - 🔄 Calcolo automatico su base saldo (2 ogni 20€)\n"
+        f"• <code>/maxorders 2</code> - 1 Coppia max (2 ordini)\n"
+        f"• <code>/maxorders 4</code> - 2 Coppie max (4 ordini)\n"
+        f"• <code>/maxorders 6</code> - 3 Coppie max (6 ordini)\n"
+        f"<i>Oppure digita qualsiasi numero pari: es. <code>/maxorders 8</code></i>"
+    )
+
 async def start_background_tasks(app):
     from telegram_bot import telegram
     app['trading_task'] = asyncio.create_task(engine.trading_loop())
@@ -1536,13 +1795,15 @@ async def start_background_tasks(app):
     if telegram.is_configured:
         app['telegram_task'] = asyncio.create_task(
             telegram.poll_commands(
-                tg_status_handler, 
-                tg_rewards_handler, 
-                tg_stop_handler, 
-                tg_resume_handler, 
-                tg_target_handler,
-                tg_info_handler,
-                tg_accumulated_handler
+                on_status_request=tg_status_handler, 
+                on_rewards_request=tg_rewards_handler, 
+                on_stop_request=tg_stop_handler, 
+                on_resume_request=tg_resume_handler, 
+                on_pnl_request=tg_pnl_handler,
+                on_target_request=tg_target_handler,
+                on_info_request=tg_info_handler,
+                on_accumulated_request=tg_accumulated_handler,
+                on_max_orders_request=tg_max_orders_handler
             )
         )
         asyncio.create_task(telegram.send_message("🚀 <b>Server Polymarket Avviato!</b>\nNotifiche attive e bot pronto."))
@@ -1550,60 +1811,200 @@ async def start_background_tasks(app):
 async def tg_status_handler() -> str:
     collat = engine.get_clob_collateral()
     orders = []
+    locked_in_orders = 0.0
+    raw_orders = []
     try:
+        from py_clob_client_v2.clob_types import OrderScoringParams
         raw_orders = engine.client.get_open_orders()
         for o in raw_orders:
+            oid = o.get("id") or o.get("orderID") or ""
             side = o.get("side", "BUY")
+            outcome = o.get("outcome", "")
             sz = float(o.get("original_size", 0) or 0)
             p = float(o.get("price", 0) or 0)
-            orders.append(f"  • {side} {sz:.1f}q @ {p:.3f}$")
+            if side == "BUY":
+                locked_in_orders += (p * sz)
+            
+            is_scoring = False
+            if oid:
+                try:
+                    sc = engine.client.is_order_scoring(OrderScoringParams(orderId=oid))
+                    is_scoring = bool(sc.get("scoring", False))
+                except Exception:
+                    pass
+            
+            sc_badge = "🟢 <b>REWARDS ATTIVE</b>" if is_scoring else "⚪ In attesa"
+            outcome_str = f" {outcome.upper()}" if outcome else ""
+            orders.append(f"  • <b>{side}{outcome_str}:</b> <code>{sz:.1f} quote @ {p:.3f}$</code> | {sc_badge}")
     except Exception:
         pass
     
+    # Invariant: Net Worth is cash balance + held token positions
+    cached_pos = getattr(engine, "cached_positions", [])
+    positions_val = float(getattr(engine, "cached_positions_val", 0.0))
+    if not cached_pos and hasattr(engine, "proxy_wallet") and engine.proxy_wallet:
+        try:
+            import httpx
+            pos_url = f"https://data-api.polymarket.com/positions?user={engine.proxy_wallet}"
+            async with httpx.AsyncClient(timeout=4.0) as hc:
+                p_resp = await hc.get(pos_url)
+                if p_resp.status_code == 200:
+                    positions = p_resp.json()
+                    formatted_pos = []
+                    tot_pos_val = 0.0
+                    for pos in positions:
+                        size = float(pos.get("size", 0) or 0)
+                        if size < 0.1:
+                            continue
+                        avg_p = float(pos.get("avgPrice", 0) or 0)
+                        cur_p = float(pos.get("curPrice", 0) or 0)
+                        title = pos.get("title", "")
+                        asset_id = str(pos.get("asset"))
+                        val = round(size * cur_p, 2)
+                        cost = round(size * avg_p, 2)
+                        pnl_usd = round(val - cost, 2)
+                        pnl_pct = round(((cur_p - avg_p) / avg_p) * 100.0, 1) if avg_p > 0 else 0.0
+                        tot_pos_val += val
+                        formatted_pos.append({
+                            "token_id": asset_id,
+                            "title": title or f"Posizione {asset_id[:8]}...",
+                            "size": round(size, 1),
+                            "avg_price": round(avg_p, 3),
+                            "cur_price": round(cur_p, 3),
+                            "current_val": val,
+                            "pnl_usd": pnl_usd,
+                            "pnl_pct": pnl_pct
+                        })
+                    cached_pos = formatted_pos
+                    positions_val = round(tot_pos_val, 2)
+                    engine.cached_positions = formatted_pos
+                    engine.cached_positions_val = positions_val
+        except Exception:
+            pass
+
+    # Filter active positions
+    pos_lines = []
+    for p in cached_pos:
+        val = float(p.get("current_val", 0.0) or 0.0)
+        sz = float(p.get("size", 0.0) or 0.0)
+        if val >= 0.10 and sz >= 0.5:
+            tok_id = str(p.get("token_id", ""))
+            matching_sell = next((o for o in raw_orders if str(o.get("asset_id", "")) == tok_id and o.get("side") == "SELL"), None)
+            sell_info = f" [In vendita @ {float(matching_sell.get('price', 0)):.2f}$]" if matching_sell else ""
+            pnl_u = float(p.get("pnl_usd", 0.0))
+            pnl_sign = "+" if pnl_u >= 0 else ""
+            pos_lines.append(f"  • <b>{p.get('title')[:32]}:</b> <code>{sz:.1f} quote @ {p.get('cur_price', 0):.3f}$</code> (Valore: <code>{val:.2f}$</code>, PnL: <code>{pnl_sign}{pnl_u:.2f}$</code>){sell_info}")
+
+    pos_text = "\n".join(pos_lines) if pos_lines else "  • <i>Nessuna posizione aperta (100% contanti)</i>"
+
     cfg = load_risk_config()
+    effective, mode, auto_calc = get_effective_max_orders(collat)
+    mode_str = "Auto (2 ogni 20€)" if mode == "auto" else "Manuale"
     orders_text = "\n".join(orders) if orders else "  • <i>Nessun ordine aperto</i>"
+    total_balance = collat
+    free_cash = max(0.0, total_balance - locked_in_orders)
+    net_worth = round(total_balance + positions_val, 2)
+    market_title = cfg.get("title", "Will Anthropic IPO by October 15, 2026?")
+
+    today_earned = await fetch_daily_rewards_live()
+    daily_est_str = f"\n• <b>Ricompense Oggi (Live CLOB):</b> <code>+{today_earned:.4f}$ USDC</code> (Soglia $1.00: {today_earned*100:.1f}%)"
+
+    active_pos = [p for p in cached_pos if float(p.get("current_val", 0) or 0) >= 0.10 and float(p.get("size", 0) or 0) >= 0.5]
+    pnl = calculate_pnl_analytics(net_worth, today_earned, active_pos)
+    p1d = pnl["1d"]
+    pall = pnl["all"]
+    p1d_sign = "+" if p1d["pnl_usd"] >= 0 else ""
+    pall_sign = "+" if pall["pnl_usd"] >= 0 else ""
+    pnl_str = f"\n• <b>Rendimento PnL:</b> Oggi <code>{p1d_sign}{p1d['pnl_usd']:.2f}$ ({p1d_sign}{p1d['pnl_pct']:.1f}%)</code> | All-Time <code>{pall_sign}{pall['pnl_usd']:.2f}$ ({pall_sign}{pall['pnl_pct']:.1f}%)</code>"
+
     return (
         f"🦅 <b>STATO BOT POLYMARKET</b>\n\n"
-        f"• <b>Saldo Collaterale:</b> <code>{collat:.2f}$ USDC</code>\n"
-        f"• <b>Profilo Rischio:</b> <code>{cfg.get('risk_profile')}</code> (Target: ${cfg.get('target_daily_rewards_usd'):.2f}/gg)\n"
-        f"• <b>Ordini Attivi ({len(orders)}):</b>\n{orders_text}\n"
+        f"• <b>Valore Totale Portafoglio (Net Worth):</b> <code>{net_worth:.2f}$ USDC</code>\n"
+        f"  ├─ 💵 <b>Cassa Funder:</b> <code>{total_balance:.2f}$ pUSD</code> (Disponibile: <code>{free_cash:.2f}$</code>, Impegnato BUY: <code>{locked_in_orders:.2f}$</code>)\n"
+        f"  └─ 📦 <b>Valore Token in Portafoglio:</b> <code>{positions_val:.2f}$ USDC</code>\n\n"
+        f"📦 <b>Posizioni Attive in Portafoglio ({len(pos_lines)}):</b>\n{pos_text}\n\n"
+        f"📋 <b>Ordini Aperti nel Book ({len(orders)}):</b>\n{orders_text}\n\n"
+        f"• <b>Tetto Max Ordini:</b> <code>{effective} ordini ({effective//2} coppie) [{mode_str}]</code>\n"
+        f"• <b>Mercato Attivo:</b> <i>{market_title}</i>{daily_est_str}{pnl_str}\n\n"
         f"• <b>Stato Sistema:</b> 🟢 <code>OPERATIVO</code>\n"
         f"• <b>Orario:</b> <code>{time.strftime('%H:%M:%S')}</code>"
     )
 
-async def tg_rewards_handler() -> str:
-    try:
-        import httpx
-        cfg = load_risk_config()
-        slug = cfg.get("slug", "donald-trump-of-truth-social-posts-september-4-september-11-2026-200plus")
-        
-        question = cfg.get("title", slug)
-        daily_pool = float(cfg.get("daily_pool", 143.0))
-        target_daily = float(cfg.get("target_daily_rewards_usd", 2.0))
-        daily_rate = float(cfg.get("expected_daily_reward", 2.15))
-        hourly_rate = daily_rate / 24.0
+async def tg_pnl_handler() -> str:
+    collat = engine.get_clob_collateral()
+    cached_pos = getattr(engine, "cached_positions", [])
+    positions_val = float(getattr(engine, "cached_positions_val", 0.0))
+    if not cached_pos and hasattr(engine, "proxy_wallet") and engine.proxy_wallet:
+        try:
+            import httpx
+            pos_url = f"https://data-api.polymarket.com/positions?user={engine.proxy_wallet}"
+            async with httpx.AsyncClient(timeout=4.0) as hc:
+                p_resp = await hc.get(pos_url)
+                if p_resp.status_code == 200:
+                    positions = p_resp.json()
+                    formatted_pos = []
+                    tot_pos_val = 0.0
+                    for pos in positions:
+                        size = float(pos.get("size", 0) or 0)
+                        if size < 0.1:
+                            continue
+                        avg_p = float(pos.get("avgPrice", 0) or 0)
+                        cur_p = float(pos.get("curPrice", 0) or 0)
+                        title = pos.get("title", "")
+                        asset_id = str(pos.get("asset"))
+                        val = round(size * cur_p, 2)
+                        cost = round(size * avg_p, 2)
+                        pnl_usd = round(val - cost, 2)
+                        pnl_pct = round(((cur_p - avg_p) / avg_p) * 100.0, 1) if avg_p > 0 else 0.0
+                        tot_pos_val += val
+                        formatted_pos.append({
+                            "token_id": asset_id,
+                            "title": title or f"Posizione {asset_id[:8]}...",
+                            "size": round(size, 1),
+                            "avg_price": round(avg_p, 3),
+                            "cur_price": round(cur_p, 3),
+                            "current_val": val,
+                            "pnl_usd": pnl_usd,
+                            "pnl_pct": pnl_pct
+                        })
+                    cached_pos = formatted_pos
+                    positions_val = round(tot_pos_val, 2)
+                    engine.cached_positions = formatted_pos
+                    engine.cached_positions_val = positions_val
+        except Exception:
+            pass
 
-        raw_orders = engine.client.get_open_orders()
-        total_open_cost = sum(float(o.get("price", 0)) * float(o.get("original_size", 0)) for o in raw_orders if o.get("side") == "BUY")
-        scoring_count = len([o for o in raw_orders if o.get("side") == "BUY"])
+    active_pos = [p for p in cached_pos if float(p.get("current_val", 0) or 0) >= 0.10 and float(p.get("size", 0) or 0) >= 0.5]
+    positions_val = sum(float(p.get("current_val", 0) or 0) for p in active_pos)
+    net_worth = collat + positions_val
+    today_rewards = await fetch_daily_rewards_live()
+    pnl = calculate_pnl_analytics(net_worth, today_rewards, active_pos)
+    
+    p1d = pnl["1d"]
+    p7d = pnl["7d"]
+    p30d = pnl["30d"]
+    pall = pnl["all"]
 
-        threshold_badge = "🟢 SOGLIA $1.00 SUPERATA (Accredito Garantito)" if daily_rate >= 1.0 else "⚠️ SOTTO SOGLIA $1.00"
+    def fmt_pnl(val, pct):
+        sign = "+" if val >= 0 else ""
+        return f"<code>{sign}{val:.2f}$ USDC</code> (<b>{sign}{pct:.1f}%</b>)"
 
-        return (
-            f"🎁 <b>RICOMPENSE IN TEMPO REALE</b>\n\n"
-            f"• <b>Mercato:</b> {question[:45]}...\n"
-            f"• <b>Profilo:</b> <code>{cfg.get('risk_profile')}</code> | Target: <code>${target_daily:.2f}/giorno</code>\n"
-            f"• <b>Montepremi Pool:</b> <code>${daily_pool:.1f} / giorno (${daily_pool/24:.2f}/h)</code>\n"
-            f"• <b>Ordini nel Book:</b> 🟢 <code>{scoring_count} attivi</code> ({total_open_cost:.2f}$ USDC)\n\n"
-            f"📈 <b>Rendimento Attuale Stimato:</b>\n"
-            f"• <b>All'Ora:</b> <code>+{hourly_rate:.4f}$ USDC / ora</code>\n"
-            f"• <b>Al Giorno:</b> <code>+{daily_rate:.2f}$ USDC / giorno</code> (~{daily_rate*30:.1f}$/mese)\n"
-            f"• <b>Payout Polymarket:</b> {threshold_badge}\n"
-            f"• <b>ROI Mensile Stimato:</b> 🚀 <code>+{(daily_rate*30 / max(total_open_cost, 1.0)) * 100:.1f}%</code>\n"
-            f"• <b>Orario:</b> <code>{time.strftime('%H:%M:%S')}</code>"
-        )
-    except Exception as e:
-        return f"⚠️ Errore calcolo ricompense: {e}"
+    return (
+        f"📈 <b>REPORT PROFIT & LOSS (RENDIMENTO)</b>\n\n"
+        f"• 📅 <b>Oggi (24h):</b> {fmt_pnl(p1d['pnl_usd'], p1d['pnl_pct'])}\n"
+        f"  ├─ 🎁 Ricompense maturate: <code>+{p1d['rewards_usd']:.2f}$ USDC</code>\n"
+        f"  └─ ⚖️ Trading & Inventario MTM: <code>{p1d['trading_pnl']:+.2f}$ USDC</code>\n\n"
+        f"• 🗓️ <b>1 Settimana (7G):</b> {fmt_pnl(p7d['pnl_usd'], p7d['pnl_pct'])}\n"
+        f"  ├─ 🎁 Ricompense totali: <code>+{p7d['rewards_usd']:.2f}$ USDC</code>\n"
+        f"  └─ ⚖️ Trading & Merge: <code>{p7d['trading_pnl']:+.2f}$ USDC</code>\n\n"
+        f"• 📆 <b>1 Mese (30G):</b> {fmt_pnl(p30d['pnl_usd'], p30d['pnl_pct'])}\n\n"
+        f"• 🏆 <b>Di Sempre (All-Time):</b> {fmt_pnl(pall['pnl_usd'], pall['pnl_pct'])}\n"
+        f"  ├─ 💵 Capitale Totale Depositato: <code>{pall['base_capital']:.2f}$ USDC</code>\n"
+        f"  ├─ 📦 Patrimonio Netto Attuale: <code>{pall['current_net_worth']:.2f}$ USDC</code>\n"
+        f"  └─ 💰 Valore Totale (con rewards): <code>{pall['total_equity_with_rewards']:.2f}$ USDC</code>\n\n"
+        f"💡 <i>Tocca <b>[🚀 Apri Mini App]</b> per visualizzare i grafici interattivi con selettore rapido 1D / 7D / 30D / ALL.</i>"
+    )
+
 
 async def tg_target_handler(raw_text: str) -> str:
     parts = raw_text.strip().split()

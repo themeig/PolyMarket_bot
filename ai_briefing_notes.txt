@@ -1,0 +1,4 @@
+• <b>Chiusura Posizione in Profitto:</b> Durante la notte le 39.7 quote Anthropic NO sono state vendute con successo tramite take-profit passivo. Il portafoglio è ora al 100% in liquidità (zero quote sbilanciate).
+• <b>Intelligence SEC / IPO:</b> Anthropic ha depositato una bozza confidenziale S-1 alla SEC; il prospetto pubblico è atteso a fine settembre, mentre il debutto effettivo in borsa è programmato per fine ottobre/novembre (dopo la scadenza Polymarket del 15 ottobre). Questo supporta fortemente l'attuale valutazione del mercato.
+• <b>Quoting Attivo:</b> Il bot quota simultaneamente BUY NO @ 0.87$ e BUY YES @ 0.10$ con piena idoneità ai rewards.
+• <b>Regime di Rischio:</b> <code>🟢 QUIET / OTTIMALE</code>. Prossimo check di de-risking: 25 settembre (72h prima della finestra S-1).

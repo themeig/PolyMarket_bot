@@ -1,0 +1,12 @@
+[
+  {
+    "date": "2026-09-01T15:00:00Z",
+    "amount": 20.0,
+    "note": "Deposito iniziale attivazione bot"
+  },
+  {
+    "date": "2026-09-05T12:00:00Z",
+    "amount": 20.0,
+    "note": "Ricarica fondi collaterale"
+  }
+]

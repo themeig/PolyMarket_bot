@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Polymarket Quant Bot — Mini App</title>
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <style>
+    :root {
+      --bg-color: var(--tg-theme-bg-color, #0b0f19);
+      --text-color: var(--tg-theme-text-color, #f8fafc);
+      --hint-color: var(--tg-theme-hint-color, #94a3b8);
+      --link-color: var(--tg-theme-link-color, #38bdf8);
+      --button-color: var(--tg-theme-button-color, #3b82f6);
+      --button-text-color: var(--tg-theme-button-text-color, #ffffff);
+      --secondary-bg-color: var(--tg-theme-secondary-bg-color, #1e293b);
+    }
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .glass-card {
+      background: rgba(30, 41, 59, 0.65);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.4);
+    }
+    .badge-pulse {
+      animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes pulse-ring {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.05); }
+    }
+    .progress-bar-fill {
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .touch-active:active {
+      transform: scale(0.97);
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body class="p-3 pb-8 max-w-md mx-auto min-h-screen flex flex-col justify-between">
+
+  <!-- TOP HEADER -->
+  <div>
+    <header class="flex items-center justify-between mb-3 px-1">
+      <div class="flex items-center gap-2">
+        <div class="relative flex items-center justify-center w-8 h-8 rounded-full bg-blue-600/20 text-blue-400 border border-blue-500/30">
+          <i class="fa-solid fa-robot text-sm"></i>
+        </div>
+        <div>
+          <h1 class="text-sm font-bold tracking-tight text-white flex items-center gap-1.5">
+            Poly-Maker Quant
+            <span id="badge-status" class="px-1.5 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 badge-pulse"></span>
+              LIVE
+            </span>
+          </h1>
+          <p id="wallet-label" class="text-[11px] text-slate-400">Wallet: 0x117d...1de8</p>
+        </div>
+      </div>
+      <button onclick="refreshData(true)" class="w-8 h-8 rounded-full glass-card flex items-center justify-center text-slate-400 hover:text-white touch-active border border-slate-700/50">
+        <i id="sync-icon" class="fa-solid fa-rotate text-xs"></i>
+      </button>
+    </header>
+
+    <!-- MARKET ACTIVE BANNER -->
+    <div class="glass-card rounded-xl p-2.5 mb-3 border-l-4 border-l-blue-500 flex items-center justify-between">
+      <div class="overflow-hidden pr-2">
+        <div class="text-[10px] uppercase font-bold text-blue-400 tracking-wider flex items-center gap-1">
+          <i class="fa-solid fa-chart-line text-[9px]"></i> Mercato Attivo
+        </div>
+        <div id="market-title" class="text-xs font-medium text-slate-200 truncate mt-0.5">
+          Will Anthropic IPO by October 15, 2026?
+        </div>
+      </div>
+      <div class="text-right flex-shrink-0">
+        <div class="text-[10px] text-slate-400">Montepremi</div>
+        <div id="market-pool" class="text-xs font-bold text-emerald-400">$100/gg</div>
+      </div>
+    </div>
+
+    <!-- MAIN FINANCIAL CARD -->
+    <div class="glass-card rounded-2xl p-4 mb-3 relative overflow-hidden">
+      <div class="absolute -right-6 -bottom-6 w-24 h-24 bg-blue-500/10 rounded-full blur-xl pointer-events-none"></div>
+      <div class="flex items-center justify-between">
+        <div class="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">Valore Totale Portafoglio (Net Worth)</div>
+        <span class="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Cassa + Token</span>
+      </div>
+      <div class="flex items-baseline gap-1.5 my-1.5">
+        <span id="val-networth" class="text-3xl font-extrabold text-white tracking-tight">43.39</span>
+        <span class="text-sm font-semibold text-blue-400">USDC</span>
+      </div>
+
+      <!-- RIPARTIZIONE PATRIMONIO A 3 BOX -->
+      <div class="grid grid-cols-3 gap-1.5 mt-3 pt-3 border-t border-slate-800/80 text-[11px]">
+        <!-- CASSA LIBERA RESIDUA -->
+        <div class="bg-slate-800/60 rounded-xl p-2.5 border border-emerald-500/30">
+          <div class="text-[9px] text-emerald-400 uppercase font-bold flex items-center gap-1">
+            <i class="fa-solid fa-coins"></i> Cassa Libera
+          </div>
+          <div id="val-free" class="font-black text-emerald-300 mt-1 text-xs">4.69$ USDC</div>
+          <div class="text-[8px] text-slate-400 mt-0.5 font-medium">Disponibile subito</div>
+        </div>
+
+        <!-- MARGINE IMPEGNATO BUY -->
+        <div class="bg-slate-800/60 rounded-xl p-2.5 border border-amber-500/30">
+          <div class="text-[9px] text-amber-400 uppercase font-bold flex items-center gap-1">
+            <i class="fa-solid fa-lock"></i> In Ordini BUY
+          </div>
+          <div id="val-locked" class="font-black text-amber-300 mt-1 text-xs">3.97$ USDC</div>
+          <div class="text-[8px] text-slate-400 mt-0.5 font-medium">Margine impegnato</div>
+        </div>
+
+        <!-- VALORE TOKEN PORTAFOGLIO -->
+        <div class="bg-slate-800/60 rounded-xl p-2.5 border border-purple-500/30">
+          <div class="text-[9px] text-purple-400 uppercase font-bold flex items-center gap-1">
+            <i class="fa-solid fa-shapes"></i> Valore Token
+          </div>
+          <div id="val-positions" class="font-black text-purple-300 mt-1 text-xs">34.73$ USDC</div>
+          <div class="text-[8px] text-slate-400 mt-0.5 font-medium">Quote in hold</div>
+        </div>
+      </div>
+
+      <!-- RIGA RIEPILOGATIVA MATEMATICA -->
+      <div class="flex items-center justify-between mt-2 pt-2 border-t border-slate-800/50 text-[10px] text-slate-400">
+        <span>💵 <b>Totale Cassa:</b> <span id="val-total-cash" class="text-slate-200 font-mono font-bold">8.66$</span> (4.69$ liberi + 3.97$ ordini)</span>
+        <span>📦 <b>Quote:</b> <span id="val-token-summary" class="text-purple-300 font-mono font-bold">34.73$</span></span>
+      </div>
+    </div>
+
+    <!-- OPEN POSITIONS CARD (SUBITO DOPO IL PATRIMONIO) -->
+    <div class="glass-card rounded-2xl p-3.5 mb-3 border border-purple-500/30">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+          <i class="fa-solid fa-wallet text-purple-400"></i>
+          Posizioni Aperte in Portafoglio (<span id="positions-count">1</span>)
+        </span>
+        <span id="positions-val-badge" class="text-[10px] font-bold text-purple-300 bg-purple-500/20 px-2 py-0.5 rounded-md border border-purple-500/40 mono">
+          34.73$ USDC
+        </span>
+      </div>
+
+      <div id="positions-list" class="space-y-2">
+        <!-- Position items injected via JS -->
+      </div>
+    </div>
+
+    <!-- PROFIT & LOSS CARD -->
+    <div class="glass-card rounded-2xl p-4 mb-3 relative overflow-hidden">
+      <div class="flex items-center justify-between mb-2.5">
+        <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+          <i class="fa-solid fa-chart-line text-emerald-400"></i>
+          Rendimento & Profit & Loss
+        </span>
+        <span id="pnl-timeframe-badge" class="text-[10px] font-semibold text-emerald-300 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+          Oggi (24h)
+        </span>
+      </div>
+
+      <!-- TIMEFRAME SELECTOR PILLS -->
+      <div class="grid grid-cols-4 gap-1 p-1 bg-slate-900/80 rounded-xl border border-slate-800 text-[11px] mb-3">
+        <button type="button" onclick="setPnlTimeframe('1d')" id="pnl-btn-1d" class="py-1 rounded-lg font-bold text-center transition-all bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Oggi</button>
+        <button type="button" onclick="setPnlTimeframe('7d')" id="pnl-btn-7d" class="py-1 rounded-lg font-medium text-slate-400 hover:text-slate-200 text-center transition-all">1 Sett</button>
+        <button type="button" onclick="setPnlTimeframe('30d')" id="pnl-btn-30d" class="py-1 rounded-lg font-medium text-slate-400 hover:text-slate-200 text-center transition-all">1 Mese</button>
+        <button type="button" onclick="setPnlTimeframe('all')" id="pnl-btn-all" class="py-1 rounded-lg font-medium text-slate-400 hover:text-slate-200 text-center transition-all">Sempre</button>
+      </div>
+
+      <!-- MAIN PNL NUMBER -->
+      <div class="flex items-baseline justify-between mb-2.5 bg-slate-800/40 p-3 rounded-xl border border-slate-700/30">
+        <div>
+          <div class="text-[10px] text-slate-400 uppercase font-semibold" id="pnl-headline-label">Guadagno Netto Oggi</div>
+          <div class="flex items-baseline gap-1.5 mt-0.5">
+            <span id="pnl-main-val" class="text-2xl font-black text-emerald-400">+0.81$</span>
+            <span id="pnl-main-pct" class="text-xs font-bold text-emerald-400/90 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">(+1.8%)</span>
+          </div>
+        </div>
+        <div class="text-right">
+          <div class="text-[10px] text-slate-400 uppercase font-semibold">Capitale Base</div>
+          <div id="pnl-base-cap" class="text-xs font-bold text-slate-200 mt-1">40.00$ USDC</div>
+        </div>
+      </div>
+
+      <!-- PNL SUB-METRICS -->
+      <div class="grid grid-cols-2 gap-2 text-[11px]">
+        <div class="bg-slate-800/30 p-2 rounded-xl border border-slate-700/30">
+          <div class="text-[9px] text-slate-400 uppercase flex items-center gap-1">
+            <i class="fa-solid fa-gift text-purple-400"></i> Ricompense Farm
+          </div>
+          <div id="pnl-rewards-val" class="font-bold text-purple-300 mt-0.5 text-xs">+1.80$ USDC</div>
+        </div>
+        <div class="bg-slate-800/30 p-2 rounded-xl border border-slate-700/30">
+          <div class="text-[9px] text-slate-400 uppercase flex items-center gap-1">
+            <i class="fa-solid fa-scale-balanced text-blue-400"></i> Trading & MTM
+          </div>
+          <div id="pnl-trading-val" class="font-bold text-slate-300 mt-0.5 text-xs">-0.99$ USDC</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- REWARDS PROGRESS CARD -->
+    <div class="glass-card rounded-2xl p-3.5 mb-3">
+      <div class="flex items-center justify-between mb-2">
+        <div class="flex items-center gap-1.5 text-xs font-bold text-slate-200">
+          <i class="fa-solid fa-gift text-purple-400"></i>
+          Ricompense Oggi (Live CLOB)
+        </div>
+        <span id="rewards-pct-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+          80.0%
+        </span>
+      </div>
+
+      <!-- PROGRESS BAR -->
+      <div class="w-full bg-slate-800/80 rounded-full h-2.5 overflow-hidden p-0.5 border border-slate-700/50 mb-2">
+        <div id="progress-bar" class="progress-bar-fill bg-gradient-to-r from-purple-500 to-emerald-400 h-full rounded-full" style="width: 80%;"></div>
+      </div>
+
+      <div class="flex items-center justify-between text-xs mb-2">
+        <span id="val-today-earned" class="font-bold text-emerald-400 text-sm">+0.7997$ USDC</span>
+        <span class="text-[11px] text-slate-400">Soglia Payout: <b>$1.00</b></span>
+      </div>
+
+      <!-- REWARDS METRICS GRID -->
+      <div class="grid grid-cols-3 gap-1.5 pt-2 border-t border-slate-800 text-[11px] text-center">
+        <div class="bg-slate-800/40 rounded-lg p-1.5">
+          <div class="text-[9px] text-slate-400 uppercase">Quota Pool</div>
+          <div id="val-pool-pct" class="font-bold text-slate-200 mt-0.5">1.66%</div>
+        </div>
+        <div class="bg-slate-800/40 rounded-lg p-1.5">
+          <div class="text-[9px] text-slate-400 uppercase">Velocità Live</div>
+          <div id="val-hourly-rate" class="font-bold text-slate-200 mt-0.5">+0.069$/h</div>
+        </div>
+        <div class="bg-slate-800/40 rounded-lg p-1.5">
+          <div class="text-[9px] text-slate-400 uppercase">Tempo $1.00</div>
+          <div id="val-time-left" class="font-bold text-purple-300 mt-0.5">~2h 54m</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACTIVE ORDERS -->
+    <div class="glass-card rounded-2xl p-3.5 mb-3">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+          <i class="fa-solid fa-layer-group text-blue-400"></i>
+          Ordini Attivi nel Book (<span id="orders-count">2</span>)
+        </span>
+        <span id="orders-scoring-count" class="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+          🟢 2/2 in Scoring
+        </span>
+      </div>
+
+      <div id="orders-list" class="space-y-1.5">
+        <!-- Order items injected via JS -->
+      </div>
+    </div>
+
+    <!-- QUICK CONTROLS SECTION -->
+    <div class="glass-card rounded-2xl p-3.5 mb-3">
+      <div class="text-xs font-bold text-slate-200 mb-2 flex items-center gap-1.5">
+        <i class="fa-solid fa-sliders text-cyan-400"></i>
+        Parametri & Controllo Rapido
+      </div>
+
+      <!-- TETTO ORDINI BUTTONS -->
+      <div class="mb-3">
+        <div class="text-[10px] text-slate-400 uppercase font-semibold mb-1.5 flex justify-between">
+          <span>Tetto Ordini Aperti</span>
+          <span id="maxorders-current" class="text-blue-400 font-bold">Auto (2 ogni 20€)</span>
+        </div>
+        <div class="grid grid-cols-4 gap-1.5">
+          <button onclick="setMaxOrders('auto')" class="order-btn py-1.5 px-2 text-xs rounded-xl glass-card font-semibold text-slate-300 hover:text-white border border-slate-700 touch-active text-center">
+            Auto
+          </button>
+          <button onclick="setMaxOrders(2)" class="order-btn py-1.5 px-2 text-xs rounded-xl glass-card font-semibold text-slate-300 hover:text-white border border-slate-700 touch-active text-center">
+            2 ord.
+          </button>
+          <button onclick="setMaxOrders(4)" class="order-btn py-1.5 px-2 text-xs rounded-xl glass-card font-semibold text-slate-300 hover:text-white border border-slate-700 touch-active text-center">
+            4 ord.
+          </button>
+          <button onclick="setMaxOrders(6)" class="order-btn py-1.5 px-2 text-xs rounded-xl glass-card font-semibold text-slate-300 hover:text-white border border-slate-700 touch-active text-center">
+            6 ord.
+          </button>
+        </div>
+      </div>
+
+      <!-- RISK PROFILE BUTTONS -->
+      <div class="mb-2">
+        <div class="text-[10px] text-slate-400 uppercase font-semibold mb-1.5 flex justify-between">
+          <span>Profilo di Rischio</span>
+          <span id="risk-current" class="text-blue-400 font-bold">Bilanciato ($2/gg)</span>
+        </div>
+        <div class="grid grid-cols-3 gap-1.5">
+          <button onclick="setTarget(1.0)" class="risk-btn py-1.5 px-1.5 text-xs rounded-xl glass-card font-semibold text-slate-300 hover:text-white border border-slate-700 touch-active text-center">
+            🛡️ $1.00
+          </button>
+          <button onclick="setTarget(2.0)" class="risk-btn py-1.5 px-1.5 text-xs rounded-xl glass-card font-semibold text-slate-300 hover:text-white border border-slate-700 touch-active text-center">
+            ⚖️ $2.00
+          </button>
+          <button onclick="setTarget(4.0)" class="risk-btn py-1.5 px-1.5 text-xs rounded-xl glass-card font-semibold text-slate-300 hover:text-white border border-slate-700 touch-active text-center">
+            🚀 $4.00
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- EMERGENCY STOP BUTTON -->
+  <div class="mt-2">
+    <button onclick="confirmEmergencyStop()" class="w-full py-2.5 px-4 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold text-xs flex items-center justify-center gap-2 touch-active transition-all">
+      <i class="fa-solid fa-hand text-sm"></i>
+      STOP EMERGENZA (REVOCA TUTTI GLI ORDINI)
+    </button>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full glass-card border border-slate-700 text-xs text-white shadow-xl opacity-0 pointer-events-none transition-opacity duration-300 z-50 flex items-center gap-2">
+    <span id="toast-icon">ℹ️</span>
+    <span id="toast-text">Messaggio</span>
+  </div>
+
+  <script>
+    // Initialize Telegram WebApp SDK
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      tg.setHeaderColor('#0b0f19');
+      tg.setBackgroundColor('#0b0f19');
+    }
+
+    function haptic(type = 'light') {
+      if (tg?.HapticFeedback) {
+        if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+        else if (type === 'error') tg.HapticFeedback.notificationOccurred('error');
+        else tg.HapticFeedback.impactOccurred(type);
+      }
+    }
+
+    function showToast(text, icon = '✅') {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-text').innerText = text;
+      document.getElementById('toast-icon').innerText = icon;
+      toast.classList.remove('opacity-0');
+      toast.classList.add('opacity-100');
+      setTimeout(() => {
+        toast.classList.remove('opacity-100');
+        toast.classList.add('opacity-0');
+      }, 2500);
+    }
+
+    let currentPnlData = null;
+    let currentPnlTimeframe = '1d';
+
+    function setPnlTimeframe(tf) {
+      currentPnlTimeframe = tf;
+      haptic('light');
+      updatePnlUI();
+    }
+
+    function updatePnlUI() {
+      if (!currentPnlData) return;
+      const tfData = currentPnlData[currentPnlTimeframe] || currentPnlData['1d'];
+      if (!tfData) return;
+
+      ['1d', '7d', '30d', 'all'].forEach(k => {
+        const btn = document.getElementById(`pnl-btn-${k}`);
+        if (btn) {
+          if (k === currentPnlTimeframe) {
+            btn.className = 'py-1 rounded-lg font-bold text-center transition-all bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+          } else {
+            btn.className = 'py-1 rounded-lg font-medium text-slate-400 hover:text-slate-200 text-center transition-all';
+          }
+        }
+      });
+
+      const pnlUsd = Number(tfData.pnl_usd || 0);
+      const pnlPct = Number(tfData.pnl_pct || 0);
+      const sign = pnlUsd >= 0 ? '+' : '';
+      const pnlColor = pnlUsd >= 0 ? 'text-emerald-400' : 'text-rose-400';
+      const badgeBorder = pnlUsd >= 0 ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-rose-500/20 bg-rose-500/10 text-rose-300';
+
+      const mainValEl = document.getElementById('pnl-main-val');
+      if (mainValEl) {
+        mainValEl.innerText = `${sign}${pnlUsd.toFixed(2)}$`;
+        mainValEl.className = `text-2xl font-black ${pnlColor}`;
+      }
+
+      const mainPctEl = document.getElementById('pnl-main-pct');
+      if (mainPctEl) {
+        mainPctEl.innerText = `(${sign}${pnlPct.toFixed(1)}%)`;
+        mainPctEl.className = `text-xs font-bold px-1.5 py-0.5 rounded border ${badgeBorder}`;
+      }
+
+      const headlineLabelEl = document.getElementById('pnl-headline-label');
+      if (headlineLabelEl) {
+        headlineLabelEl.innerText = tfData.label ? `Guadagno Netto ${tfData.label}` : 'Guadagno Netto';
+      }
+
+      const tfBadgeEl = document.getElementById('pnl-timeframe-badge');
+      if (tfBadgeEl) {
+        tfBadgeEl.innerText = tfData.label || currentPnlTimeframe.toUpperCase();
+      }
+
+      const baseCapEl = document.getElementById('pnl-base-cap');
+      if (baseCapEl) {
+        baseCapEl.innerText = Number(tfData.base_capital || 40).toFixed(2) + '$ USDC';
+      }
+
+      const rewardsValEl = document.getElementById('pnl-rewards-val');
+      if (rewardsValEl) {
+        rewardsValEl.innerText = '+' + Number(tfData.rewards_usd || 0).toFixed(2) + '$ USDC';
+      }
+
+      const tradingValEl = document.getElementById('pnl-trading-val');
+      if (tradingValEl) {
+        const tVal = Number(tfData.trading_pnl || 0);
+        const tSign = tVal >= 0 ? '+' : '';
+        const tColor = tVal >= 0 ? 'text-emerald-300' : 'text-slate-300';
+        tradingValEl.innerText = `${tSign}${tVal.toFixed(2)}$ USDC`;
+        tradingValEl.className = `font-bold ${tColor} mt-0.5 text-xs`;
+      }
+    }
+
+    async function refreshData(manual = false) {
+      const syncIcon = document.getElementById('sync-icon');
+      if (manual) syncIcon.classList.add('fa-spin');
+
+      try {
+        let resStatus = {};
+        let resRewards = {};
+
+        try {
+          const r1 = await fetch('/api/polymaker/status?t=' + Date.now(), { cache: 'no-store' });
+          if (r1.ok) resStatus = await r1.json();
+        } catch (e1) {
+          console.error("Errore fetch status:", e1);
+        }
+
+        try {
+          const r2 = await fetch('/api/polymaker/accumulated_rewards?t=' + Date.now(), { cache: 'no-store' });
+          if (r2.ok) resRewards = await r2.json();
+        } catch (e2) {
+          console.error("Errore fetch rewards:", e2);
+        }
+
+        if (resStatus.pnl) {
+          currentPnlData = resStatus.pnl;
+          updatePnlUI();
+        }
+
+        const netWorth = Number(resStatus.net_worth || 0);
+        const totalCash = Number(resStatus.total_balance || 0);
+        const lockedOrders = Number(resStatus.locked_orders || resStatus.locked_in_orders || 0);
+        const freeCash = Number(resStatus.free_cash !== undefined ? resStatus.free_cash : Math.max(0, totalCash - lockedOrders));
+        const positionsVal = Number(resStatus.positions_val || 0);
+
+        document.getElementById('val-networth').innerText = netWorth.toFixed(2);
+        document.getElementById('val-free').innerText = freeCash.toFixed(2) + '$ USDC';
+        document.getElementById('val-locked').innerText = lockedOrders.toFixed(2) + '$ USDC';
+        document.getElementById('val-positions').innerText = positionsVal.toFixed(2) + '$ USDC';
+        if (document.getElementById('val-total-cash')) {
+          document.getElementById('val-total-cash').innerText = totalCash.toFixed(2) + '$';
+        }
+        if (document.getElementById('val-token-summary')) {
+          document.getElementById('val-token-summary').innerText = positionsVal.toFixed(2) + '$';
+        }
+
+        const activeTitle = resStatus.active_market?.title || resStatus.active_market_title;
+        if (activeTitle) {
+          document.getElementById('market-title').innerText = activeTitle;
+        }
+
+        // Render Open Positions
+        const positions = resStatus.positions || [];
+        const posCountEl = document.getElementById('positions-count');
+        if (posCountEl) posCountEl.innerText = positions.length;
+        const posValBadgeEl = document.getElementById('positions-val-badge');
+        if (posValBadgeEl) posValBadgeEl.innerText = positionsVal.toFixed(2) + '$ USDC';
+
+        const positionsListEl = document.getElementById('positions-list');
+        if (positionsListEl) {
+          if (positions.length === 0) {
+            positionsListEl.innerHTML = '<div class="text-slate-400 text-xs py-3 text-center italic bg-slate-800/30 rounded-xl border border-slate-700/30">Nessuna posizione aperta (100% contanti liberi)</div>';
+          } else {
+            positionsListEl.innerHTML = positions.map(p => {
+              const pnlUsd = Number(p.pnl_usd || 0);
+              const pnlPct = Number(p.pnl_pct || 0);
+              const pnlColor = pnlUsd >= 0 ? 'text-emerald-400' : 'text-rose-400';
+              const pnlSign = pnlUsd >= 0 ? '+' : '';
+              let exitBadge = `<span class="text-[9px] text-purple-300 bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20 font-semibold">In portafoglio</span>`;
+              if (p.sell_order) {
+                const sellP = Number(p.sell_order.price || 0).toFixed(2);
+                exitBadge = `<span class="text-[9px] text-emerald-300 bg-emerald-500/20 px-2 py-0.5 rounded-full border border-emerald-500/30 font-bold flex items-center gap-1"><i class="fa-solid fa-tag text-[8px]"></i> In Vendita ASK @ ${sellP}$</span>`;
+              }
+              return `
+                <div class="p-3 rounded-xl bg-slate-800/50 border border-purple-500/30 text-xs shadow-sm">
+                  <div class="flex items-start justify-between gap-2 mb-1.5">
+                    <span class="font-bold text-slate-100 leading-tight">${p.title}</span>
+                    <div class="shrink-0">${exitBadge}</div>
+                  </div>
+                  <div class="grid grid-cols-3 gap-1 py-1.5 px-2 bg-slate-900/60 rounded-lg border border-slate-800 text-[10px] mb-1.5">
+                    <div>
+                      <span class="text-slate-400 block">Quantità</span>
+                      <span class="text-purple-300 font-black mono text-xs">${p.size} quote</span>
+                    </div>
+                    <div>
+                      <span class="text-slate-400 block">Carico ➔ Attuale</span>
+                      <span class="text-slate-200 font-mono font-semibold">${Number(p.avg_price).toFixed(2)}$ ➔ ${Number(p.cur_price).toFixed(2)}$</span>
+                    </div>
+                    <div class="text-right">
+                      <span class="text-slate-400 block">Valore Attuale</span>
+                      <span class="text-slate-100 font-black mono text-xs">${Number(p.current_val).toFixed(2)}$ USDC</span>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                    <span>PnL Non Realizzato: <b class="${pnlColor}">${pnlSign}${pnlUsd.toFixed(2)}$ (${pnlSign}${pnlPct.toFixed(1)}%)</b></span>
+                    <span class="text-[9px] text-slate-500 italic">Auto take-profit maker</span>
+                  </div>
+                </div>
+              `;
+            }).join('');
+          }
+        }
+
+        const todayEarned = Number(resRewards.today_earned || 0.0);
+        const thresholdPct = Math.min(100, (todayEarned / 1.00) * 100);
+        document.getElementById('val-today-earned').innerText = '+' + todayEarned.toFixed(4) + '$ USDC';
+        document.getElementById('rewards-pct-badge').innerText = thresholdPct.toFixed(1) + '%';
+        document.getElementById('progress-bar').style.width = thresholdPct + '%';
+
+        const poolPct = Number(resRewards.pct_pool || 0.0);
+        document.getElementById('val-pool-pct').innerText = poolPct.toFixed(2) + '%';
+
+        const hourlyRate = Number(resRewards.hourly_rate || 0.0);
+        document.getElementById('val-hourly-rate').innerText = '+' + hourlyRate.toFixed(4) + '$/h';
+
+        if (todayEarned >= 1.00) {
+          document.getElementById('val-time-left').innerText = 'Raggiunto!';
+          document.getElementById('val-time-left').className = 'font-bold text-emerald-400 mt-0.5';
+        } else if (hourlyRate > 0) {
+          const remUsd = 1.00 - todayEarned;
+          const minsLeft = Math.round((remUsd / hourlyRate) * 60);
+          const h = Math.floor(minsLeft / 60);
+          const m = minsLeft % 60;
+          document.getElementById('val-time-left').innerText = h > 0 ? `~${h}h ${m}m` : `~${m}m`;
+        } else {
+          document.getElementById('val-time-left').innerText = 'In calcolo...';
+        }
+
+        const orders = resStatus.open_orders || [];
+        document.getElementById('orders-count').innerText = orders.length;
+        const scoringCount = orders.filter(o => o.scoring).length;
+        document.getElementById('orders-scoring-count').innerText = `🟢 ${scoringCount}/${orders.length} in Scoring`;
+
+        const ordersListEl = document.getElementById('orders-list');
+        if (orders.length === 0) {
+          ordersListEl.innerHTML = '<div class="text-slate-400 text-xs py-2 text-center italic">Nessun ordine aperto nel book</div>';
+        } else {
+          ordersListEl.innerHTML = orders.map(o => {
+            const sideColor = o.outcome === 'YES' ? 'text-blue-400 border-blue-500/30 bg-blue-500/10' : 'text-purple-400 border-purple-500/30 bg-purple-500/10';
+            const badgeScoring = o.scoring 
+              ? '<span class="text-[9px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 font-bold">REWARDS ON</span>'
+              : '<span class="text-[9px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">In attesa</span>';
+            return `
+              <div class="flex items-center justify-between p-2 rounded-xl bg-slate-800/40 border border-slate-700/40 text-xs">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 text-[10px] font-bold rounded-md border ${sideColor}">${o.side} ${o.outcome}</span>
+                  <span class="text-slate-200 font-semibold">${Number(o.size).toFixed(1)} q. @ ${Number(o.price).toFixed(3)}$</span>
+                </div>
+                <div>${badgeScoring}</div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        if (manual) {
+          haptic('light');
+          showToast('Dati sincronizzati!');
+        }
+      } catch (err) {
+        console.error('Refresh error:', err);
+      } finally {
+        if (manual) syncIcon.classList.remove('fa-spin');
+      }
+    }
+
+    async function setMaxOrders(val) {
+      haptic('medium');
+      try {
+        const payload = val === 'auto' ? { mode: 'auto' } : { mode: 'manual', val: parseInt(val) };
+        const res = await fetch('/api/polymaker/set_max_orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          haptic('success');
+          showToast(`Tetto ordini: ${data.effective_max_orders} ordini (${data.mode})`);
+          refreshData();
+        }
+      } catch (err) {
+        haptic('error');
+        showToast('Errore impostazione ordini', '⚠️');
+      }
+    }
+
+    async function setTarget(val) {
+      haptic('medium');
+      try {
+        const res = await fetch('/api/polymaker/set_risk_profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target: val })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          haptic('success');
+          showToast(`Target impostato: $${val.toFixed(2)}/giorno`);
+          refreshData();
+        }
+      } catch (err) {
+        haptic('error');
+        showToast('Errore impostazione target', '⚠️');
+      }
+    }
+
+    async function confirmEmergencyStop() {
+      haptic('heavy');
+      if (confirm('Sei sicuro di voler revocare TUTTI gli ordini aperti ed arrestare il bot?')) {
+        try {
+          const res = await fetch('/api/polymaker/cancel_all', { method: 'POST' });
+          const data = await res.json();
+          haptic('success');
+          showToast('Tutti gli ordini revocati!', '🛑');
+          refreshData();
+        } catch (err) {
+          haptic('error');
+          showToast('Errore cancellazione', '⚠️');
+        }
+      }
+    }
+
+    refreshData();
+    setInterval(refreshData, 3000);
+  </script>
+</body>
+</html>

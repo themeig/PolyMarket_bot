@@ -1,0 +1,26 @@
+[
+  {
+    "id": "anthropic-s1-q4-2025",
+    "market_slug": "will-anthropic-ipo-by-october-15-2026-949",
+    "title": "Anthropic Public S-1 Prospectus Release Window",
+    "event_date_utc": "2026-09-28T16:00:00Z",
+    "reduce_only_hours": 72.0,
+    "halt_before_minutes": 30.0,
+    "cooloff_post_minutes": 60.0,
+    "source": "SEC EDGAR / Wall Street Reports (Confidential draft submitted June 2026, public filing targeted late September)",
+    "status": "ACTIVE",
+    "notes": "Company submitted confidential S-1 draft in June 2026. Public prospectus anticipated late September prior to mid-October investor roadshow. Debut targeted late October/November (post-Oct 15)."
+  },
+  {
+    "id": "anthropic-resolution-final",
+    "market_slug": "will-anthropic-ipo-by-october-15-2026-949",
+    "title": "Anthropic IPO Final Market Resolution Deadline",
+    "event_date_utc": "2026-10-15T23:59:59Z",
+    "reduce_only_hours": 120.0,
+    "halt_before_minutes": 120.0,
+    "cooloff_post_minutes": 0.0,
+    "source": "Polymarket Official Resolution Rule",
+    "status": "ACTIVE",
+    "notes": "Official market expiry. Bot transitions to REDUCE_ONLY 5 days prior to avoid pin-risk."
+  }
+]

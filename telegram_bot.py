@@ -32,23 +32,40 @@ class TelegramNotifier:
     def is_configured(self) -> bool:
         return bool(self.token and self.chat_id)
 
-    async def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
+    async def send_message(self, text: str, parse_mode: str = "HTML", reply_markup: dict | None = None) -> bool:
         """Send a push message to the configured Telegram chat."""
         if not self.is_configured:
             return False
         url = f"{self.base_url}/sendMessage"
-        payload = {
+        payload: dict[str, Any] = {
             "chat_id": self.chat_id,
             "text": text,
             "parse_mode": parse_mode,
             "disable_web_page_preview": True,
         }
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 r = await client.post(url, json=payload)
                 return r.status_code == 200
         except Exception as e:
             print(f"[Telegram] Errore invio messaggio: {e}")
+            return False
+
+    async def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> bool:
+        """Acknowledge inline keyboard button click to dismiss loading spinner."""
+        if not self.is_configured or not callback_query_id:
+            return False
+        url = f"{self.base_url}/answerCallbackQuery"
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                await client.post(url, json=payload)
+                return True
+        except Exception:
             return False
 
     def send_message_sync(self, text: str) -> None:
@@ -60,6 +77,31 @@ class TelegramNotifier:
             loop.create_task(self.send_message(text))
         except RuntimeError:
             asyncio.run(self.send_message(text))
+
+    async def register_bot_commands(self) -> bool:
+        """Register command autocomplete menu (/status, /rewards, etc.) with Telegram."""
+        if not self.is_configured:
+            return False
+        url = f"{self.base_url}/setMyCommands"
+        commands = [
+            {"command": "status", "description": "Saldo, ordini aperti, scoring e stato bot"},
+            {"command": "pnl", "description": "Rendimento & PnL (Oggi, 7G, 30G, Sempre)"},
+            {"command": "rewards", "description": "Guadagni live oggi, resa e soglia $1.00"},
+            {"command": "accumulated", "description": "Storico totale ricompense on-chain"},
+            {"command": "maxorders", "description": "Mostra o imposta tetto massimo ordini"},
+            {"command": "target", "description": "Mostra o imposta target e profilo di rischio"},
+            {"command": "info", "description": "Guida completa a tutti i comandi"},
+            {"command": "ping", "description": "Test connettività e reattività bot"},
+            {"command": "stop", "description": "Revoca ordini e arresto immediato"},
+            {"command": "resume", "description": "Riattiva quotazione automatica"}
+        ]
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(url, json={"commands": commands})
+                return r.status_code == 200
+        except Exception as e:
+            print(f"[Telegram] Errore registrazione comandi: {e}")
+            return False
 
     async def notify_fill(self, token_name: str, side: str, price: float, size: float, title: str) -> None:
         """Alert on trade fill."""
@@ -108,12 +150,20 @@ class TelegramNotifier:
                             on_rewards_request: Callable[[], Coroutine[Any, Any, str]],
                             on_stop_request: Callable[[], Coroutine[Any, Any, str]],
                             on_resume_request: Callable[[], Coroutine[Any, Any, str]],
+                            on_pnl_request: Callable[[], Coroutine[Any, Any, str]] | None = None,
                             on_target_request: Callable[[str], Coroutine[Any, Any, str]] | None = None,
                             on_info_request: Callable[[], Coroutine[Any, Any, str]] | None = None,
-                            on_accumulated_request: Callable[[], Coroutine[Any, Any, str]] | None = None) -> None:
+                            on_accumulated_request: Callable[[], Coroutine[Any, Any, str]] | None = None,
+                            on_max_orders_request: Callable[[str], Coroutine[Any, Any, str]] | None = None) -> None:
         """Background listener for interactive Telegram commands."""
+
         if not self.is_configured:
             return
+
+        try:
+            await self.register_bot_commands()
+        except Exception:
+            pass
 
         print("[Telegram Bot] In ascolto per comandi interattivi (/status, /rewards, /accumulated, /info, /target, /rischio, /stop, /resume)...")
         while True:
@@ -126,9 +176,20 @@ class TelegramNotifier:
                         data = r.json()
                         for update in data.get("result", []):
                             self._last_offset = update.get("update_id", self._last_offset)
-                            msg = update.get("message", {})
-                            chat_id = str(msg.get("chat", {}).get("id", ""))
-                            raw_text = msg.get("text", "").strip()
+                            
+                            is_callback = "callback_query" in update
+                            if is_callback:
+                                cb = update["callback_query"]
+                                cb_id = cb.get("id", "")
+                                msg = cb.get("message", {})
+                                chat_id = str(cb.get("from", {}).get("id", "") or msg.get("chat", {}).get("id", ""))
+                                raw_text = cb.get("data", "").strip()
+                                asyncio.create_task(self.answer_callback_query(cb_id))
+                            else:
+                                msg = update.get("message", {})
+                                chat_id = str(msg.get("chat", {}).get("id", ""))
+                                raw_text = msg.get("text", "").strip()
+
                             text = raw_text.lower()
                             parts = text.split()
                             cmd = parts[0].split("@")[0] if parts else ""
@@ -142,40 +203,54 @@ class TelegramNotifier:
                                 print(f"[Telegram Bot] Ignorato messaggio da chat {chat_id} (chat_id autorizzato: {self.chat_id})")
                                 continue
 
+                            async def send_reply(res: Any) -> None:
+                                if isinstance(res, tuple):
+                                    txt, markup = res
+                                    await self.send_message(txt, reply_markup=markup)
+                                elif isinstance(res, str):
+                                    await self.send_message(res)
+
                             try:
                                 if cmd in ("/info", "/help", "info", "help", "/comandi", "comandi"):
                                     if on_info_request:
                                         reply = await on_info_request()
                                     else:
                                         reply = "🤖 Digita /status, /rewards, /accumulated, /target"
-                                    await self.send_message(reply)
+                                    await send_reply(reply)
                                 elif cmd in ("/accumulated", "/storico", "/accumulate", "/totale", "/payouts", "accumulated", "storico", "totale"):
                                     if on_accumulated_request:
                                         reply = await on_accumulated_request()
-                                        await self.send_message(reply)
+                                        await send_reply(reply)
                                 elif cmd in ("/status", "/stats", "status"):
                                     reply = await on_status_request()
-                                    await self.send_message(reply)
+                                    await send_reply(reply)
+                                elif cmd in ("/pnl", "/profit", "/rendimento", "/gain", "pnl", "profit", "rendimento", "gain"):
+                                    if on_pnl_request:
+                                        reply = await on_pnl_request()
+                                        await send_reply(reply)
                                 elif cmd in ("/rewards", "/ricompense", "/yield", "/guadagni", "rewards", "ricompense"):
                                     reply = await on_rewards_request()
-                                    await self.send_message(reply)
+                                    await send_reply(reply)
                                 elif cmd in ("/target", "/rischio", "target", "rischio") and on_target_request:
                                     reply = await on_target_request(raw_text)
-                                    await self.send_message(reply)
+                                    await send_reply(reply)
+                                elif cmd in ("/maxorders", "/maxordini", "/ordini", "/coppie", "maxorders", "maxordini", "coppie") and on_max_orders_request:
+                                    reply = await on_max_orders_request(raw_text)
+                                    await send_reply(reply)
                                 elif cmd in ("/stop", "/halt", "stop"):
                                     reply = await on_stop_request()
-                                    await self.send_message(reply)
+                                    await send_reply(reply)
                                 elif cmd in ("/resume", "/start", "start"):
                                     reply = await on_resume_request()
-                                    await self.send_message(reply)
+                                    await send_reply(reply)
                                 elif cmd in ("/ping", "ping"):
                                     await self.send_message("🏓 <b>Pong!</b> Il bot è attivo e connesso.")
                                 elif cmd.startswith("/"):
                                     if on_info_request:
                                         reply = await on_info_request()
                                     else:
-                                        reply = "🤖 Comando non riconosciuto. Digita <code>/info</code> per la lista completa."
-                                    await self.send_message(reply)
+                                        reply = "🤖 Comando non riconosciuto. Digita /info per la lista completa."
+                                    await send_reply(reply)
                             except Exception as cmd_err:
                                 print(f"[Telegram Bot] Errore esecuzione '{cmd}': {cmd_err}")
                                 await self.send_message(f"⚠️ Errore esecuzione comando: {cmd_err}")

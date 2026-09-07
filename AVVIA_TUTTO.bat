@@ -25,6 +25,7 @@ start "" "http://localhost:8080/polymaker"
 echo [+] Avvio Motore poly-maker Market Maker...
 cd external_repos\poly-maker
 set PYTHONUTF8=1
-python -u -m polymaker.cli run
+.\.venv\Scripts\polymaker_python.exe -m polymaker.cli run
+
 
 pause

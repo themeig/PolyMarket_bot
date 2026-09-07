@@ -50,3 +50,10 @@ desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Local Binaries & Environments
+.venv/
+*.exe
+cloudflared_url.txt
+*.db
+

@@ -184,15 +184,29 @@ class TokenMerger:
             else:
                 calldata = contract.encode_abi('mergePositions', [Web3.to_checksum_address(USDC_POLYGON_ADDRESS), bytes(32), clean_cid, [1, 2], amount_raw])
 
-            call = DepositWalletCall(target=Web3.to_checksum_address(target_addr), value="0", data=calldata)
-            
+            calls = [DepositWalletCall(target=Web3.to_checksum_address(target_addr), value="0", data=calldata)]
+
+            # Wrap into pUSD so funds are immediately usable on CLOB V2
+            onramp_addr = Web3.to_checksum_address("0x93070a847efef7f70739046a929d47a521f5b8ee")
+            onramp_abi = [{"name": "wrap", "type": "function", "stateMutability": "nonpayable",
+                           "inputs": [{"name": "underlyingToken", "type": "address"},
+                                      {"name": "recipient", "type": "address"},
+                                      {"name": "amount", "type": "uint256"}], "outputs": []}]
+            onramp_c = w3.eth.contract(address=onramp_addr, abi=onramp_abi)
+            wrap_data = onramp_c.encode_abi('wrap', [
+                Web3.to_checksum_address(USDC_POLYGON_ADDRESS),
+                Web3.to_checksum_address(self.proxy_wallet),
+                amount_raw
+            ])
+            calls.append(DepositWalletCall(target=onramp_addr, value="0", data=wrap_data))
+
             from eth_account import Account
             signer = Account.from_key(self.private_key).address
             nonce_resp = client.get_nonce(signer, "WALLET")
             nonce = nonce_resp.get("nonce") if isinstance(nonce_resp, dict) else getattr(nonce_resp, "nonce", 0)
             deadline = str(int(time.time()) + 3600)
 
-            resp = client.execute_deposit_wallet_batch([call], Web3.to_checksum_address(self.proxy_wallet), str(nonce), deadline)
+            resp = client.execute_deposit_wallet_batch(calls, Web3.to_checksum_address(self.proxy_wallet), str(nonce), deadline)
             tx_hash = getattr(resp, "transaction_hash", None) or getattr(resp, "hash", None) or str(resp)
             log.info(f"[MERGE] Gasless Merge successfully broadcasted via Relayer! Tx: {tx_hash}")
             return tx_hash

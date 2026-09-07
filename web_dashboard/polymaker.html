@@ -146,18 +146,135 @@
                 </div>
             </div>
 
-            <div class="flex items-center gap-3">
-                <div class="px-3.5 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-right">
-                    <span class="text-[10px] uppercase font-bold text-gray-400 block">Capitale Netto</span>
-                    <span id="header-net-worth" class="text-base font-black mono text-emerald-400">20.37$ USDC</span>
+            <div class="flex flex-wrap items-center gap-2.5">
+                <div class="px-3 py-2 rounded-xl bg-gray-900/90 border border-emerald-500/30 text-right">
+                    <span class="text-[9px] uppercase font-bold text-gray-400 block">Patrimonio Totale</span>
+                    <span id="header-net-worth" class="text-base font-black mono text-emerald-400">43.39$ USDC</span>
                 </div>
-                <div class="px-3.5 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-right">
-                    <span class="text-[10px] uppercase font-bold text-gray-400 block">Rewards Oggi</span>
-                    <span id="header-rewards" class="text-base font-black mono text-amber-400">+2.15$ USDC</span>
+                <div class="px-3 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-right">
+                    <span class="text-[9px] uppercase font-bold text-gray-400 block">Contanti Liberi</span>
+                    <span id="header-free-cash" class="text-base font-black mono text-cyan-300">8.66$</span>
                 </div>
-                <div class="px-3.5 py-2 rounded-xl bg-gray-900/90 border border-purple-900/50 text-right">
-                    <span class="text-[10px] uppercase font-bold text-purple-400 block">Totale Accumulato</span>
-                    <span id="header-accumulated" class="text-base font-black mono text-purple-300">+1.49$ USDC</span>
+                <div class="px-3 py-2 rounded-xl bg-gray-900/90 border border-gray-800 text-right">
+                    <span class="text-[9px] uppercase font-bold text-purple-400 block">Valore Token</span>
+                    <span id="header-positions-val" class="text-base font-black mono text-purple-300">34.73$</span>
+                </div>
+                <div class="px-3 py-2 rounded-xl bg-gray-900/90 border border-amber-500/30 text-right">
+                    <span class="text-[9px] uppercase font-bold text-amber-400 block">Rewards Oggi</span>
+                    <span id="header-rewards" class="text-base font-black mono text-amber-300">+1.80$ USDC</span>
+                </div>
+                <div class="px-3 py-2 rounded-xl bg-gray-900/90 border border-purple-900/50 text-right">
+                    <span class="text-[9px] uppercase font-bold text-purple-400 block">Tot. Accumulato</span>
+                    <span id="header-accumulated" class="text-base font-black mono text-purple-300">+3.29$ USDC</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4-TIMEFRAME PROFIT & LOSS (RENDIMENTO) CARDS -->
+        <div class="space-y-2">
+            <div class="flex items-center justify-between px-1">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="trending-up" class="w-4 h-4 text-emerald-400"></i>
+                    <h3 class="text-xs font-black uppercase tracking-wider text-gray-300">Rendimento & Profit & Loss Multi-Timeframe</h3>
+                </div>
+                <span class="text-[10px] text-gray-500 font-medium">Auto-aggiornamento da contratti on-chain e CLOB</span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <!-- OGGI (24h) -->
+                <div class="p-4 rounded-2xl glass border border-emerald-500/30 bg-emerald-950/10 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                            <i data-lucide="calendar" class="w-3.5 h-3.5"></i> Oggi (24h)
+                        </span>
+                        <span id="pnl-1d-pct" class="text-[11px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">+1.8%</span>
+                    </div>
+                    <div class="flex items-baseline gap-2">
+                        <span id="pnl-1d-val" class="text-2xl font-black mono text-emerald-300">+0.81$</span>
+                        <span class="text-[10px] font-semibold text-gray-400">USDC Netto</span>
+                    </div>
+                    <div class="pt-2 border-t border-gray-800/80 space-y-0.5 text-[11px] text-gray-400">
+                        <div class="flex justify-between">
+                            <span>🎁 Rewards Live:</span>
+                            <span id="pnl-1d-rewards" class="font-bold mono text-purple-300">+1.80$</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>⚖️ Trading & MTM:</span>
+                            <span id="pnl-1d-trading" class="font-bold mono text-gray-300">-0.99$</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1 SETTIMANA (7G) -->
+                <div class="p-4 rounded-2xl glass border border-cyan-500/30 bg-cyan-950/10 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold uppercase tracking-wider text-cyan-400 flex items-center gap-1.5">
+                            <i data-lucide="calendar-days" class="w-3.5 h-3.5"></i> 1 Settimana (7G)
+                        </span>
+                        <span id="pnl-7d-pct" class="text-[11px] font-black px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">+13.0%</span>
+                    </div>
+                    <div class="flex items-baseline gap-2">
+                        <span id="pnl-7d-val" class="text-2xl font-black mono text-cyan-300">+5.19$</span>
+                        <span class="text-[10px] font-semibold text-gray-400">USDC Netto</span>
+                    </div>
+                    <div class="pt-2 border-t border-gray-800/80 space-y-0.5 text-[11px] text-gray-400">
+                        <div class="flex justify-between">
+                            <span>🎁 Rewards Totali:</span>
+                            <span id="pnl-7d-rewards" class="font-bold mono text-purple-300">+3.29$</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>⚖️ Trading & Merge:</span>
+                            <span id="pnl-7d-trading" class="font-bold mono text-emerald-300">+1.90$</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1 MESE (30G) -->
+                <div class="p-4 rounded-2xl glass border border-indigo-500/30 bg-indigo-950/10 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold uppercase tracking-wider text-indigo-300 flex items-center gap-1.5">
+                            <i data-lucide="calendar-range" class="w-3.5 h-3.5"></i> 1 Mese (30G)
+                        </span>
+                        <span id="pnl-30d-pct" class="text-[11px] font-black px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">+13.0%</span>
+                    </div>
+                    <div class="flex items-baseline gap-2">
+                        <span id="pnl-30d-val" class="text-2xl font-black mono text-indigo-300">+5.19$</span>
+                        <span class="text-[10px] font-semibold text-gray-400">USDC Netto</span>
+                    </div>
+                    <div class="pt-2 border-t border-gray-800/80 space-y-0.5 text-[11px] text-gray-400">
+                        <div class="flex justify-between">
+                            <span>🎯 Target Mensile:</span>
+                            <span class="font-bold mono text-amber-300">~$60.00 / mese</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>⏱️ Storico Attivo:</span>
+                            <span class="font-medium text-gray-300">6 giorni (da 1 Set)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DI SEMPRE (All-Time) -->
+                <div class="p-4 rounded-2xl glass border border-purple-500/30 bg-purple-950/10 space-y-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-xs font-bold uppercase tracking-wider text-purple-300 flex items-center gap-1.5">
+                            <i data-lucide="trophy" class="w-3.5 h-3.5"></i> Di Sempre (All-Time)
+                        </span>
+                        <span id="pnl-all-pct" class="text-[11px] font-black px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30">+13.0%</span>
+                    </div>
+                    <div class="flex items-baseline gap-2">
+                        <span id="pnl-all-val" class="text-2xl font-black mono text-purple-300">+5.19$</span>
+                        <span class="text-[10px] font-semibold text-gray-400">USDC Netto</span>
+                    </div>
+                    <div class="pt-2 border-t border-gray-800/80 space-y-0.5 text-[11px] text-gray-400">
+                        <div class="flex justify-between">
+                            <span>💵 Depositi Totali:</span>
+                            <span id="pnl-all-base" class="font-bold mono text-gray-300">40.00$ USDC</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>🏆 Valore con Rewards:</span>
+                            <span id="pnl-all-equity" class="font-bold mono text-emerald-300">45.19$ USDC</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -304,6 +421,118 @@
             </div>
         </div>
 
+        <!-- MAX OPEN ORDERS & CAPACITY SETTINGS -->
+        <div class="p-6 rounded-2xl glass space-y-5 border border-cyan-500/30 glow-cyan">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0">
+                        <i data-lucide="layers" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-base font-black text-white flex items-center gap-2">
+                            Tetto Massimo Ordini Aperti & Capacità
+                            <span id="max-orders-mode-badge" class="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold">
+                                🔄 AUTO (2 ogni 20€)
+                            </span>
+                        </h3>
+                        <p class="text-xs text-gray-400 mt-0.5">Di base il bot alloca 2 ordini (1 coppia YES+NO) ogni 20€ di saldo per guadagnare le rewards senza rischiare token orfani. Puoi lasciare l'auto o scegliere tu.</p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2 bg-gray-900/90 p-2 rounded-xl border border-gray-800">
+                    <span class="text-xs text-gray-400 font-medium">Tetto Attivo:</span>
+                    <span id="display-max-orders-val" class="text-sm font-black mono text-cyan-300">2 Ordini</span>
+                    <span id="display-max-pairs-val" class="text-[11px] text-gray-500 font-bold">(1 Coppia)</span>
+                </div>
+            </div>
+
+            <!-- PRESETS GRID -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <button type="button" onclick="setMaxOrdersPreset('auto')" id="btn-orders-auto" class="p-3 rounded-xl text-left border transition-all bg-cyan-500/15 border-cyan-500/60 shadow-sm flex flex-col justify-between">
+                    <div class="text-xs font-black text-cyan-300 flex items-center gap-1.5">
+                        🔄 Auto (2 ogni 20€)
+                    </div>
+                    <p class="text-[10px] text-gray-300 mt-1">Dinamico in base al saldo wallet</p>
+                </button>
+
+                <button type="button" onclick="setMaxOrdersPreset(2)" id="btn-orders-2" class="p-3 rounded-xl text-left border transition-all bg-gray-900/80 hover:bg-gray-800/80 border-gray-800 hover:border-gray-700 flex flex-col justify-between">
+                    <div class="text-xs font-black text-gray-200">
+                        1 Coppia (2 ordini)
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-1">Ideale per capitale 20$ - 35$</p>
+                </button>
+
+                <button type="button" onclick="setMaxOrdersPreset(4)" id="btn-orders-4" class="p-3 rounded-xl text-left border transition-all bg-gray-900/80 hover:bg-gray-800/80 border-gray-800 hover:border-gray-700 flex flex-col justify-between">
+                    <div class="text-xs font-black text-gray-200">
+                        2 Coppie (4 ordini)
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-1">Ideale per capitale 40$ - 55$</p>
+                </button>
+
+                <button type="button" onclick="setMaxOrdersPreset(6)" id="btn-orders-6" class="p-3 rounded-xl text-left border transition-all bg-gray-900/80 hover:bg-gray-800/80 border-gray-800 hover:border-gray-700 flex flex-col justify-between">
+                    <div class="text-xs font-black text-gray-200">
+                        3 Coppie (6 ordini)
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-1">Ideale per capitale 60$+</p>
+                </button>
+            </div>
+
+            <!-- CUSTOM INPUT & SUBMIT -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2 border-t border-gray-800/80">
+                <div class="flex items-center gap-3 flex-1">
+                    <label for="input-custom-orders" class="text-xs font-bold text-gray-300 shrink-0">Numero Ordini Personalizzato:</label>
+                    <input type="number" id="input-custom-orders" min="2" max="20" step="2" value="2" class="w-20 px-3 py-1.5 rounded-lg bg-gray-900 border border-gray-700 text-cyan-300 font-bold mono text-sm focus:outline-none focus:border-cyan-400" onchange="onCustomOrdersInputChange()">
+                    <span id="custom-orders-pairs-hint" class="text-xs text-gray-400 font-medium">(1 Coppia completa YES+NO)</span>
+                </div>
+                <button type="button" onclick="applyCustomMaxOrders()" class="py-2 px-4 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700 text-white font-bold text-xs shadow-md shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 active:scale-95">
+                    <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+                    <span>Salva Tetto Ordini</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- OPEN POSITIONS / TOKEN INVENTORY SECTION -->
+        <div class="p-6 rounded-2xl glass space-y-4 border border-purple-500/30">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="wallet" class="w-5 h-5 text-purple-400"></i>
+                    <h3 class="text-base font-bold text-white flex items-center gap-2">
+                        Portafoglio Token & Posizioni Aperte
+                        <span id="positions-count-badge" class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-mono font-bold border border-purple-500/40">
+                            0 Posizioni
+                        </span>
+                    </h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400">Valore Totale Token:</span>
+                    <span id="positions-total-val" class="px-2.5 py-1 text-xs font-black mono rounded-lg bg-purple-500/20 text-purple-300 border border-purple-500/40">0.00$ USDC</span>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-gray-800">
+                <table class="w-full text-left text-xs">
+                    <thead class="bg-gray-900/90 text-gray-400 uppercase font-bold border-b border-gray-800">
+                        <tr>
+                            <th class="p-3">Mercato & Token</th>
+                            <th class="p-3">Quantità</th>
+                            <th class="p-3">Prezzo Medio Carico</th>
+                            <th class="p-3">Prezzo Attuale</th>
+                            <th class="p-3">Valore di Mercato</th>
+                            <th class="p-3">PnL MTM</th>
+                            <th class="p-3">Strategia di Uscita</th>
+                        </tr>
+                    </thead>
+                    <tbody id="positions-table-body" class="divide-y divide-gray-800 text-gray-200">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+            <p class="text-[11px] text-gray-500 flex items-center gap-1.5">
+                <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
+                Le quote spaiate sono protette: il bot le colloca automaticamente con ordini passivi Take-Profit Maker a gradini (senza dump al mercato) o le fonde istantaneamente a 1.00$ con Complete Set Merging non appena completa la coppia.
+            </p>
+        </div>
+
         <!-- ACTIVE QUOTING SECTION -->
         <div class="p-6 rounded-2xl glass space-y-4">
             <div class="flex items-center justify-between">
@@ -420,6 +649,12 @@
                 if (data.net_worth !== undefined) {
                     document.getElementById('header-net-worth').innerText = `${data.net_worth.toFixed(2)}$ USDC`;
                 }
+                if (data.free_cash !== undefined && document.getElementById('header-free-cash')) {
+                    document.getElementById('header-free-cash').innerText = `${data.free_cash.toFixed(2)}$`;
+                }
+                if (data.positions_val !== undefined && document.getElementById('header-positions-val')) {
+                    document.getElementById('header-positions-val').innerText = `${data.positions_val.toFixed(2)}$`;
+                }
                 if (data.fv !== undefined) {
                     document.getElementById('val-fv').innerText = `${data.fv.toFixed(3)}$`;
                 }
@@ -431,6 +666,80 @@
                 }
                 if (data.inventory !== undefined) {
                     document.getElementById('val-inventory').innerText = `${data.inventory.toFixed(1)} (${data.inventory === 0 ? 'Neutro' : (data.inventory > 0 ? 'Long YES' : 'Long NO')})`;
+                }
+
+                // Aggiorna PnL 4-Timeframe Cards
+                if (data.pnl) {
+                    const p1 = data.pnl['1d'];
+                    const p7 = data.pnl['7d'];
+                    const p30 = data.pnl['30d'];
+                    const pa = data.pnl['all'];
+
+                    if (p1 && document.getElementById('pnl-1d-val')) {
+                        const s1 = p1.pnl_usd >= 0 ? '+' : '';
+                        document.getElementById('pnl-1d-val').innerText = `${s1}${p1.pnl_usd.toFixed(2)}$`;
+                        document.getElementById('pnl-1d-pct').innerText = `${s1}${p1.pnl_pct.toFixed(1)}%`;
+                        document.getElementById('pnl-1d-rewards').innerText = `+${p1.rewards_usd.toFixed(2)}$`;
+                        document.getElementById('pnl-1d-trading').innerText = `${p1.trading_pnl >= 0 ? '+' : ''}${p1.trading_pnl.toFixed(2)}$`;
+                    }
+                    if (p7 && document.getElementById('pnl-7d-val')) {
+                        const s7 = p7.pnl_usd >= 0 ? '+' : '';
+                        document.getElementById('pnl-7d-val').innerText = `${s7}${p7.pnl_usd.toFixed(2)}$`;
+                        document.getElementById('pnl-7d-pct').innerText = `${s7}${p7.pnl_pct.toFixed(1)}%`;
+                        document.getElementById('pnl-7d-rewards').innerText = `+${p7.rewards_usd.toFixed(2)}$`;
+                        document.getElementById('pnl-7d-trading').innerText = `${p7.trading_pnl >= 0 ? '+' : ''}${p7.trading_pnl.toFixed(2)}$`;
+                    }
+                    if (p30 && document.getElementById('pnl-30d-val')) {
+                        const s30 = p30.pnl_usd >= 0 ? '+' : '';
+                        document.getElementById('pnl-30d-val').innerText = `${s30}${p30.pnl_usd.toFixed(2)}$`;
+                        document.getElementById('pnl-30d-pct').innerText = `${s30}${p30.pnl_pct.toFixed(1)}%`;
+                    }
+                    if (pa && document.getElementById('pnl-all-val')) {
+                        const sa = pa.pnl_usd >= 0 ? '+' : '';
+                        document.getElementById('pnl-all-val').innerText = `${sa}${pa.pnl_usd.toFixed(2)}$`;
+                        document.getElementById('pnl-all-pct').innerText = `${sa}${pa.pnl_pct.toFixed(1)}%`;
+                        document.getElementById('pnl-all-base').innerText = `${pa.base_capital.toFixed(2)}$ USDC`;
+                        document.getElementById('pnl-all-equity').innerText = `${pa.total_equity_with_rewards.toFixed(2)}$ USDC`;
+                    }
+                }
+
+                // Aggiorna tabella posizioni token in portafoglio
+                const posTbody = document.getElementById('positions-table-body');
+                const posBadge = document.getElementById('positions-count-badge');
+                const posTotalVal = document.getElementById('positions-total-val');
+                if (posTbody) {
+                    const posList = data.positions || [];
+                    if (posBadge) posBadge.innerText = `${posList.length} ${posList.length === 1 ? 'Posizione' : 'Posizioni'}`;
+                    if (posTotalVal) posTotalVal.innerText = `${(data.positions_val || 0).toFixed(2)}$ USDC`;
+
+                    if (posList.length > 0) {
+                        posTbody.innerHTML = posList.map(p => {
+                            const pnlSign = p.pnl_usd >= 0 ? '+' : '';
+                            const pnlColor = p.pnl_usd >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                            let exitBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">⏳ In attesa di merge a 1.00$</span>`;
+                            if (p.sell_order) {
+                                exitBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">🎯 Take-Profit ASK @ ${p.sell_order.price}$</span>`;
+                            }
+                            return `
+                                <tr class="hover:bg-gray-800/40">
+                                    <td class="p-3">
+                                        <div class="font-bold text-gray-100">${p.title}</div>
+                                        <div class="text-[10px] text-gray-500 mono">${p.token_id.slice(0, 10)}...${p.token_id.slice(-6)}</div>
+                                    </td>
+                                    <td class="p-3 mono font-bold text-gray-200">${p.size} quote</td>
+                                    <td class="p-3 mono text-gray-400">${p.avg_price.toFixed(3)}$</td>
+                                    <td class="p-3 mono text-cyan-300 font-semibold">${p.cur_price.toFixed(3)}$</td>
+                                    <td class="p-3 mono font-black text-purple-300">${p.current_val.toFixed(2)}$</td>
+                                    <td class="p-3 mono font-bold ${pnlColor}">
+                                        ${pnlSign}${p.pnl_usd.toFixed(2)}$ (${pnlSign}${p.pnl_pct.toFixed(1)}%)
+                                    </td>
+                                    <td class="p-3">${exitBadge}</td>
+                                </tr>
+                            `;
+                        }).join('');
+                    } else {
+                        posTbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-gray-500">Nessuna posizione aperta. Portafoglio 100% contanti liberi.</td></tr>`;
+                    }
                 }
 
                 // Aggiorna mercato attivo
@@ -455,7 +764,7 @@
                 } else {
                     tbody.innerHTML = `<tr><td colspan="7" class="p-4 text-center text-gray-500">Nessun ordine aperto o sincronizzazione in corso...</td></tr>`;
                 }
-
+                lucide.createIcons();
             } catch (err) {
                 console.error("Errore aggiornamento poly-maker:", err);
             }
@@ -555,10 +864,100 @@
                     document.getElementById('active-profile-badge').innerText = data.profile_name || 'micro-rewards';
                 }
 
+                // Update Max Orders UI
+                currentMaxOrdersMode = data.max_orders_mode || "auto";
+                currentEffectiveMaxOrders = data.effective_max_orders || 2;
+                const effectivePairs = data.effective_max_pairs || Math.floor(currentEffectiveMaxOrders / 2);
+
+                if (document.getElementById('display-max-orders-val')) {
+                    document.getElementById('display-max-orders-val').innerText = `${currentEffectiveMaxOrders} Ordini`;
+                }
+                if (document.getElementById('display-max-pairs-val')) {
+                    document.getElementById('display-max-pairs-val').innerText = `(${effectivePairs} ${effectivePairs === 1 ? 'Coppia' : 'Coppie'})`;
+                }
+                if (document.getElementById('input-custom-orders')) {
+                    document.getElementById('input-custom-orders').value = currentEffectiveMaxOrders;
+                }
+                if (document.getElementById('custom-orders-pairs-hint')) {
+                    document.getElementById('custom-orders-pairs-hint').innerText = `(${effectivePairs} ${effectivePairs === 1 ? 'Coppia completa YES+NO' : 'Coppie complete YES+NO'})`;
+                }
+
+                const ordersBadge = document.getElementById('max-orders-mode-badge');
+                if (ordersBadge) {
+                    if (currentMaxOrdersMode === "auto") {
+                        ordersBadge.className = "text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold";
+                        ordersBadge.innerHTML = `🔄 AUTO (2 ogni 20€ - Calcolati: ${data.auto_calculated_orders || 2})`;
+                    } else {
+                        ordersBadge.className = "text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/40 font-bold";
+                        ordersBadge.innerHTML = `🔧 MANUALE (${currentEffectiveMaxOrders} Ordini)`;
+                    }
+                }
+
                 updatePresetButtonsUI();
+                updateMaxOrdersButtonsUI(currentMaxOrdersMode, currentEffectiveMaxOrders);
             } catch (e) {
                 console.error("Errore caricamento risk profile:", e);
             }
+        }
+
+        let currentMaxOrdersMode = "auto";
+        let currentEffectiveMaxOrders = 2;
+
+        function updateMaxOrdersButtonsUI(mode, effectiveVal) {
+            const btnAuto = document.getElementById('btn-orders-auto');
+            const btn2 = document.getElementById('btn-orders-2');
+            const btn4 = document.getElementById('btn-orders-4');
+            const btn6 = document.getElementById('btn-orders-6');
+            if (!btnAuto || !btn2 || !btn4 || !btn6) return;
+
+            const inactiveStyle = "p-3 rounded-xl text-left border transition-all bg-gray-900/80 hover:bg-gray-800/80 border-gray-800 hover:border-gray-700 flex flex-col justify-between";
+            const activeStyle = "p-3 rounded-xl text-left border transition-all bg-cyan-500/15 border-cyan-500/60 shadow-sm flex flex-col justify-between";
+
+            btnAuto.className = (mode === "auto") ? activeStyle : inactiveStyle;
+            btn2.className = (mode === "manual" && effectiveVal === 2) ? activeStyle : inactiveStyle;
+            btn4.className = (mode === "manual" && effectiveVal === 4) ? activeStyle : inactiveStyle;
+            btn6.className = (mode === "manual" && effectiveVal === 6) ? activeStyle : inactiveStyle;
+        }
+
+        async function setMaxOrdersPreset(preset) {
+            try {
+                let payload = {};
+                if (preset === 'auto') {
+                    payload = { mode: 'auto' };
+                } else {
+                    payload = { mode: 'manual', max_open_orders: parseInt(preset) };
+                }
+                const res = await fetch('/api/polymaker/set_max_orders', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const r = await res.json();
+                if (r.success) {
+                    await loadRiskProfile();
+                    alert(preset === 'auto' 
+                        ? `🔄 Tetto ordini impostato su AUTOMATICO!\nRegola: 2 ordini (1 coppia YES+NO) ogni 20€ di saldo.\nTetto calcolato: ${r.effective_max_orders} ordini (${r.effective_max_pairs} coppie).`
+                        : `✅ Tetto ordini impostato a ${r.effective_max_orders} ordini (${r.effective_max_pairs} coppie)!`);
+                }
+            } catch (e) {
+                alert("Errore salvataggio tetto ordini: " + e);
+            }
+        }
+
+        function onCustomOrdersInputChange() {
+            let num = parseInt(document.getElementById('input-custom-orders').value) || 2;
+            if (num < 2) num = 2;
+            if (num % 2 !== 0) num += 1;
+            document.getElementById('input-custom-orders').value = num;
+            const pairs = Math.floor(num / 2);
+            document.getElementById('custom-orders-pairs-hint').innerText = `(${pairs} ${pairs === 1 ? 'Coppia completa YES+NO' : 'Coppie complete YES+NO'})`;
+        }
+
+        async function applyCustomMaxOrders() {
+            let num = parseInt(document.getElementById('input-custom-orders').value) || 2;
+            if (num < 2) num = 2;
+            if (num % 2 !== 0) num += 1;
+            await setMaxOrdersPreset(num);
         }
 
         function updatePresetButtonsUI() {
