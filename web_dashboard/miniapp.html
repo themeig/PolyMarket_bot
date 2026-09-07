@@ -84,12 +84,12 @@
           <i class="fa-solid fa-chart-line text-[9px]"></i> Mercato Attivo
         </div>
         <div id="market-title" class="text-xs font-medium text-slate-200 truncate mt-0.5">
-          Will Anthropic IPO by October 15, 2026?
+          Fetterman out by December 31, 2026?
         </div>
       </div>
       <div class="text-right flex-shrink-0">
         <div class="text-[10px] text-slate-400">Montepremi</div>
-        <div id="market-pool" class="text-xs font-bold text-emerald-400">$100/gg</div>
+        <div id="market-pool" class="text-xs font-bold text-emerald-400">$300/gg</div>
       </div>
     </div>
 
@@ -553,7 +553,10 @@
         document.getElementById('rewards-pct-badge').innerText = thresholdPct.toFixed(1) + '%';
         document.getElementById('progress-bar').style.width = thresholdPct + '%';
 
-        const marketPool = Number(resRewards.market_daily_pool || 200.0);
+        const marketPool = Number(resRewards.market_daily_pool || 300.0);
+        if (document.getElementById('market-pool')) {
+          document.getElementById('market-pool').innerText = `$${marketPool.toFixed(0)}/gg`;
+        }
         if (document.getElementById('val-daily-pool-badge')) {
           document.getElementById('val-daily-pool-badge').innerText = `Pool: ${marketPool.toFixed(0)}$/die`;
         }
