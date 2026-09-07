@@ -21,7 +21,8 @@ Un sistema algoritmico asincrono ad alta frequenza (HFT) e market making quantit
 4. [⚡ Funzionalità Chiave](#-funzionalità-chiave)
 5. [📂 Struttura del Repository](#-struttura-del-repository)
 6. [🚀 Installazione e Avvio Rapido](#-installazione-e-avvio-rapido)
-7. [🛡️ Sicurezza e Risk Management](#️-sicurezza-e-risk-management)
+7. [🤖 Antigravity Autonomous AI Cronjob & Catalyst Calendar](#-7-antigravity-autonomous-ai-cronjob--catalyst-calendar)
+8. [🛡️ Sicurezza e Risk Management](#️-sicurezza-e-risk-management)
 
 ---
 
@@ -247,7 +248,31 @@ Apri il browser su: **`http://localhost:8080/`**
 
 ---
 
-## 🛡️ Sicurezza e Risk Management
+## 🤖 7. Antigravity Autonomous AI Cronjob & Catalyst Calendar
+
+Il sistema integra una **routine di supervisione autonoma basata su Antigravity AI**, programmata per svegliarsi ogni mattina ed eseguire l'audit quantitativo e informativo del portafoglio:
+
+```
+ ┌───────────── Minuto (30)              --> Alle 06:30 UTC
+ │ ┌─────────── Ora (6 del mattino)      --> 08:30 CET / Italiane
+ │ │ ┌───────── Giorno del mese (*)      --> Tutti i giorni
+ │ │ │ ┌─────── Mese (*)                 --> Tutto l'anno
+ │ │ │ │ ┌───── Giorno della settimana (*)-> Lunedì - Domenica
+ │ │ │ │ │
+ 30 6 * * *
+```
+
+### Caratteristiche Chiave dell'Audit Autonomo:
+1. **Verifica Finanziaria Esecutiva:** Legge in tempo reale la cassa libera, il collaterale impegnato negli ordini e il valore delle quote, verificando il PnL storico.
+2. **Intelligence Semantica con Agente AI:** L'Agente Antigravity usa `search_web` per scandagliare annunci ufficiali, verbali e depositi regolatori (es. SEC Form S-1), distinguendo rumor da atti formali.
+3. **De-risking Pre-Evento ([`catalysts.json`](catalysts.json)):** Se viene individuato un catalizzatore imminente, il sistema forza il de-risking preventivo (`REDUCE_ONLY` a T-72h e `BLACKOUT` totale ordini a T-30m per prevenire lo sniping).
+4. **Briefing su Telegram & Mini App:** Spedisce ogni mattina il report di sintesi formattato su Telegram con link alla Mini App Web per il monitoraggio live su smartphone.
+
+👉 Per la guida tecnica completa sull'architettura del cronjob e le opzioni di schedulazione, consulta [**`docs/ANTIGRAVITY_CRONJOB.md`**](docs/ANTIGRAVITY_CRONJOB.md).
+
+---
+
+## 🛡️ 8. Sicurezza e Risk Management
 
 * **Zero Rischio Liquidazione:** Il bot opera solo con collaterale USDC in spot/prediction token (senza leva finanziaria né prestiti).
 * **Inventory Soft-Caps:** Limite massimo di esposizione controllato per singolo mercato ($q_{\text{max}} = 12.00\$$).
