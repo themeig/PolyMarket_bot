@@ -1,9 +1,9 @@
 {
   "target_daily_rewards_usd": 1.0,
   "sprint_threshold_usd": 1.0,
-  "sprint_shares": 30.0,
+  "sprint_shares": 42.0,
   "cruise_shares": 20.0,
-  "min_free_cash_usdc": 15.0,
+  "min_free_cash_usdc": 3.0,
   "risk_profile": "BALANCED",
   "profile_name": "micro-rewards",
   "delta_min_ticks": 1,
