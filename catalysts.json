@@ -1,5 +1,29 @@
 [
   {
+    "id": "treasury-cpi-august-2026",
+    "market_slug": "will-the-10-year-treasury-yield-hit-5pt5-before-2027-997-245",
+    "title": "US CPI August 2026 Release (BLS)",
+    "event_date_utc": "2026-09-11T12:30:00Z",
+    "reduce_only_hours": 12.0,
+    "halt_before_minutes": 30.0,
+    "cooloff_post_minutes": 60.0,
+    "source": "Bureau of Labor Statistics (BLS) Official Schedule",
+    "status": "ACTIVE",
+    "notes": "August CPI release at 08:30 ET. Key macro catalyst for 10-year Treasury yield trajectory."
+  },
+  {
+    "id": "treasury-fomc-decision-sep-2026",
+    "market_slug": "will-the-10-year-treasury-yield-hit-5pt5-before-2027-997-245",
+    "title": "Federal Reserve FOMC Interest Rate Decision & SEP Dot-Plot",
+    "event_date_utc": "2026-09-16T18:00:00Z",
+    "reduce_only_hours": 24.0,
+    "halt_before_minutes": 60.0,
+    "cooloff_post_minutes": 120.0,
+    "source": "Federal Reserve Board Official Calendar",
+    "status": "ACTIVE",
+    "notes": "FOMC statement and Summary of Economic Projections (dot-plot). Critical interest rate driver."
+  },
+  {
     "id": "anthropic-s1-q4-2025",
     "market_slug": "will-anthropic-ipo-by-october-15-2026-949",
     "title": "Anthropic Public S-1 Prospectus Release Window",

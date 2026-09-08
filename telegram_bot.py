@@ -45,13 +45,23 @@ class TelegramNotifier:
         }
         if reply_markup:
             payload["reply_markup"] = reply_markup
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(url, json=payload)
-                return r.status_code == 200
-        except Exception as e:
-            print(f"[Telegram] Errore invio messaggio: {e}")
-            return False
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.post(url, json=payload)
+                    if r.status_code == 200:
+                        return True
+                    if r.status_code == 429:
+                        data = r.json()
+                        retry_after = data.get("parameters", {}).get("retry_after", 3)
+                        await asyncio.sleep(retry_after + 1)
+                        continue
+                    print(f"[Telegram] Errore status {r.status_code}: {r.text}")
+                    return False
+            except Exception as e:
+                print(f"[Telegram] Errore invio messaggio: {e}")
+                await asyncio.sleep(2.0)
+        return False
 
     async def answer_callback_query(self, callback_query_id: str, text: str | None = None) -> bool:
         """Acknowledge inline keyboard button click to dismiss loading spinner."""
@@ -254,6 +264,14 @@ class TelegramNotifier:
                             except Exception as cmd_err:
                                 print(f"[Telegram Bot] Errore esecuzione '{cmd}': {cmd_err}")
                                 await self.send_message(f"⚠️ Errore esecuzione comando: {cmd_err}")
+                    elif r.status_code == 429:
+                        try:
+                            retry_after = r.json().get("parameters", {}).get("retry_after", 10)
+                        except Exception:
+                            retry_after = 10
+                        await asyncio.sleep(retry_after + 2)
+                    else:
+                        await asyncio.sleep(3.0)
 
             except Exception as loop_err:
                 print(f"[Telegram Bot] Polling loop exception: {loop_err}")

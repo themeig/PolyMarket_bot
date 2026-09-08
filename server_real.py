@@ -998,11 +998,16 @@ async def handle_polymaker_status(request):
 
         markets_toml_path = os.path.join(os.path.dirname(__file__), "external_repos", "poly-maker", "config", "markets.toml")
         if os.path.exists(markets_toml_path):
-            with open(markets_toml_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                for line in content.splitlines():
-                    if "slug" in line and "=" in line:
-                        active_slug = line.split("=")[1].strip().strip('"').strip("'")
+            try:
+                import tomllib
+                with open(markets_toml_path, "rb") as f:
+                    tdata = tomllib.load(f)
+                    for m in tdata.get("markets", []):
+                        if m.get("profile") != "inventory-exit" and m.get("enabled", True):
+                            active_slug = m.get("slug", active_slug)
+                            break
+            except Exception:
+                pass
 
         if os.path.exists(db_path):
             try:

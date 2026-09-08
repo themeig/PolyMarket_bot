@@ -1,4 +1,6 @@
-• <b>Chiusura Posizione in Profitto:</b> Durante la notte le 39.7 quote Anthropic NO sono state vendute con successo tramite take-profit passivo. Il portafoglio è ora al 100% in liquidità (zero quote sbilanciate).
-• <b>Intelligence SEC / IPO:</b> Anthropic ha depositato una bozza confidenziale S-1 alla SEC; il prospetto pubblico è atteso a fine settembre, mentre il debutto effettivo in borsa è programmato per fine ottobre/novembre (dopo la scadenza Polymarket del 15 ottobre). Questo supporta fortemente l'attuale valutazione del mercato.
-• <b>Quoting Attivo:</b> Il bot quota simultaneamente BUY NO @ 0.87$ e BUY YES @ 0.10$ con piena idoneità ai rewards.
-• <b>Regime di Rischio:</b> <code>🟢 QUIET / OTTIMALE</code>. Prossimo check di de-risking: 25 settembre (72h prima della finestra S-1).
+• <b>Focus Macro (10-year Treasury Yield 5.5%):</b> Il rendimento del decennale USA scambia attualmente nell'area <b>4.78% - 4.80%</b>, ampiamente al di sotto della soglia target di 5.5%. Nessuna anomalia o rischio di toxic jump immediato nella giornata odierna.
+• <b>Catalizzatori di Mercato Individuati:</b>
+  - <i>11 Settembre 2026 (ore 14:30 CET):</i> Rilascio indice inflazione <b>US CPI Agosto</b> (BLS).
+  - <i>16 Settembre 2026 (ore 20:00 CET):</i> Decisione tassi <b>FOMC Federal Reserve</b> e rilascio dot-plot economico (SEP).
+• <b>Protezione Automatica:</b> Entrambi gli eventi sono stati censiti nel <code>catalysts.json</code>. Il bot passerà automaticamente in <code>REDUCE_ONLY</code> e <code>HALT</code> di sicurezza in prossimità delle pubblicazioni.
+• <b>Gestione Rischio:</b> Il bot mantiene in inventario 30 quote YES a prezzo medio 0.10$ in attesa di pairing completo passivo per neutralizzare l'esposizione. Cassa USDC libera protetta al 100%.
