@@ -12,12 +12,12 @@
   "risk_profile": "TURBO_SPRINT",
   "profile_name": "micro-rewards",
   "delta_min_ticks": 0,
-  "slug": "will-workhorse-announce-bankruptcy-before-2027-596-468-177-494-196-581",
-  "condition_id": "0x28c2427adaa725c391ba431f2dc88c91e06c91cd0ab59a6fc6e5a756c6f48f97",
-  "title": "Will Workhorse announce bankruptcy before 2027?",
+  "slug": "will-any-ai-model-reach-a-chatbot-arena-score-of-at-least-1550-by-december-31-144-471-117",
+  "condition_id": "0x4669581cb5c701fd3632a5529ee702353d91d3d4320aba33a31683b388b83869",
+  "title": "Will any AI model reach a Chatbot Arena score of at least 1550 by December 31?",
   "daily_pool": 5.0,
-  "expected_daily_reward": 1.94,
-  "expected_monthly_reward": 58.2,
+  "expected_daily_reward": 2.38,
+  "expected_monthly_reward": 71.4,
   "max_open_orders": 4,
   "max_orders_mode": "manual"
 }
